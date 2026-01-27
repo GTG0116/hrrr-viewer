@@ -28,10 +28,7 @@ jobs:
         run: |
           python update_map.py
         
-      - name: Commit and Push Frames
+      - name: Clear Old Frames
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git add frames_temp/*.png frames_precip/*.png || true
-          git commit -m "Update HRRR Temp and Precip Maps" --allow-empty || true
-          git push
+          rm -rf frames_temp/*.png
+          rm -rf frames_precip/*.png
