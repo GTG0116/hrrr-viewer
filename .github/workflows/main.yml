@@ -15,25 +15,23 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip' # This helps keep the libraries installed
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-dev
           python -m pip install --upgrade pip
-          # Adding [extras] ensures metpy and other map tools are included
-          pip install "herbie-data[extras]" metpy cartopy matplotlib xarray cfgrib eccodes
+          pip install "herbie-data[extras]" metpy cartopy matplotlib xarray cfgrib eccodes pytz
 
       - name: Run Script
         run: |
-          # We run it directly here to ensure it uses the pip packages above
           python update_map.py
         
-     - name: Commit and Push Frames
+      - name: Commit and Push Frames
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add frames/*.png
-          git commit -m "Update HRRR Forecast Loop" --allow-empty
+          git add frames/*.png || true
+          git commit -m "Update HRRR Forecast Loop" --allow-empty || true
           git push
