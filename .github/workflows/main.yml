@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # THIS LINE IS CRITICAL
+      contents: write # FIXED: Gives the action permission to push files
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
