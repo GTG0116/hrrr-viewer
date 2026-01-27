@@ -10,7 +10,7 @@ import xarray as xr
 from matplotlib.colors import ListedColormap
 
 # --- CONFIGURATION ---
-ZOOM_BOUNDS = [-82, -67, 37, 48] # [West, East, South, North]
+ZOOM_BOUNDS = [-82, -67, 37, 48] 
 
 # 1. Find the most recent available HRRR run
 H_init = None
@@ -43,12 +43,13 @@ for fxx in range(max_fxx + 1):
         H = Herbie(H_init.date.strftime('%Y-%m-%d %H:00'), 
                    model='hrrr', product='sfc', fxx=fxx, priority=['aws'])
         
-        # Pull data and force it into a single Dataset
-        ds = H.xarray("(:TMP:2 m|:CSNOW:|:CICEP:|:CFRZR:|:CRAIN:)")
-        if isinstance(ds, list):
-            ds = xr.merge(ds)
+        # Pull data and force it into a single Dataset to fix 'list' errors
+        ds_raw = H.xarray("(:TMP:2 m|:CSNOW:|:CICEP:|:CFRZR:|:CRAIN:)")
+        
+        # CRITICAL FIX: If ds_raw is a list, merge it into one Dataset
+        ds = xr.merge(ds_raw) if isinstance(ds_raw, list) else ds_raw
 
-        # Get the projection from Herbie directly, which is more reliable
+        # Pull projection from H directly instead of ds to avoid attribute errors
         map_projection = H.crs 
 
         utc_v = H.valid_date.replace(tzinfo=pytz.UTC)
@@ -64,7 +65,7 @@ for fxx in range(max_fxx + 1):
         im = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, transform=ccrs.PlateCarree(), 
                           cmap='jet', vmin=0, vmax=100)
         plt.colorbar(im, label="Temperature (°F)", orientation='horizontal', pad=0.05)
-        plt.title(f"HRRR Temperature f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
+        plt.title(f"HRRR Temp f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
         plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
         plt.close()
 
@@ -83,11 +84,11 @@ for fxx in range(max_fxx + 1):
         ax.pcolormesh(ds.longitude, ds.latitude, np.ma.masked_where(precip_mask == 0, precip_mask),
                      transform=ccrs.PlateCarree(), cmap=p_cmap, vmin=0, vmax=4)
         
-        plt.title(f"HRRR Precip Type f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
+        plt.title(f"HRRR Precip f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
         plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
         plt.close()
         
         print(f"Success: f{fxx:02d}")
 
     except Exception as e:
-        print(f"Skipping f{fxx:02d}: {e}")
+        print(f"Skipping f{fxx:02d} due to error: {e}")
