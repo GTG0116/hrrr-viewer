@@ -32,7 +32,6 @@ jobs:
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          # The || true ensures this step doesn't crash if there are no changes
           git add frames_temp/*.png frames_precip/*.png || true
           git commit -m "Update HRRR Maps" --allow-empty || true
           git push
