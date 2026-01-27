@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 import pytz
 import os
 import numpy as np
-import xarray as xr
 from matplotlib.colors import ListedColormap
 
 # --- CONFIGURATION ---
@@ -43,47 +42,53 @@ for fxx in range(max_fxx + 1):
         H = Herbie(H_init.date.strftime('%Y-%m-%d %H:00'), 
                    model='hrrr', product='sfc', fxx=fxx, priority=['aws'])
         
-        # Pull data and force it into a single Dataset to fix 'list' errors
-        ds_raw = H.xarray("(:TMP:2 m|:CSNOW:|:CICEP:|:CFRZR:|:CRAIN:)")
-        
-        # CRITICAL FIX: If ds_raw is a list, merge it into one Dataset
-        ds = xr.merge(ds_raw) if isinstance(ds_raw, list) else ds_raw
-
-        # Pull projection from H directly instead of ds to avoid attribute errors
+        # Pull Projection and Time metadata directly from Herbie object
         map_projection = H.crs 
-
         utc_v = H.valid_date.replace(tzinfo=pytz.UTC)
         et_v = utc_v.astimezone(pytz.timezone('US/Eastern'))
         timestamp = f"Valid: {utc_v.strftime('%m/%d %H:%M')}Z | {et_v.strftime('%I:%M %p ET')}"
 
-        # --- MAP 1: TEMPERATURE ---
-        temp_f = (ds.t2m - 273.15) * 9/5 + 32
+        # --- STEP A: TEMPERATURE ---
+        ds_t = H.xarray("TMP:2 m")
+        if isinstance(ds_t, list): ds_t = ds_t[0]
+        temp_f = (ds_t.t2m - 273.15) * 9/5 + 32
+
         fig, ax = plt.subplots(figsize=(10, 7), subplot_kw={'projection': map_projection})
         ax.set_extent(ZOOM_BOUNDS, crs=ccrs.PlateCarree())
         ax.add_feature(cfeature.STATES, edgecolor='black', linewidth=0.5)
-        
-        im = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, transform=ccrs.PlateCarree(), 
+        im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, temp_f, transform=ccrs.PlateCarree(), 
                           cmap='jet', vmin=0, vmax=100)
         plt.colorbar(im, label="Temperature (°F)", orientation='horizontal', pad=0.05)
         plt.title(f"HRRR Temp f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
         plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
         plt.close()
 
-        # --- MAP 2: PRECIP TYPE ---
+        # --- STEP B: PRECIP TYPE ---
+        # Fetching separately avoids the 'Multiple Hypercube' list error
         precip_mask = np.zeros_like(temp_f)
-        if 'crain' in ds: precip_mask = np.where(ds.crain == 1, 1, precip_mask)
-        if 'csnow' in ds: precip_mask = np.where(ds.csnow == 1, 2, precip_mask)
-        if 'cfrzr' in ds: precip_mask = np.where(ds.cfrzr == 1, 3, precip_mask)
-        if 'cicep' in ds: precip_mask = np.where(ds.cicep == 1, 4, precip_mask)
+        try:
+            ds_p = H.xarray(":(CRAIN|CSNOW|CFRZR|CICEP):")
+            if isinstance(ds_p, list):
+                # Manual merge loop for precip types
+                for sub in ds_p:
+                    if 'crain' in sub: precip_mask = np.where(sub.crain == 1, 1, precip_mask)
+                    if 'csnow' in sub: precip_mask = np.where(sub.csnow == 1, 2, precip_mask)
+                    if 'cfrzr' in sub: precip_mask = np.where(sub.cfrzr == 1, 3, precip_mask)
+                    if 'cicep' in sub: precip_mask = np.where(sub.cicep == 1, 4, precip_mask)
+            else:
+                if 'crain' in ds_p: precip_mask = np.where(ds_p.crain == 1, 1, precip_mask)
+                if 'csnow' in ds_p: precip_mask = np.where(ds_p.csnow == 1, 2, precip_mask)
+                if 'cfrzr' in ds_p: precip_mask = np.where(ds_p.cfrzr == 1, 3, precip_mask)
+                if 'cicep' in ds_p: precip_mask = np.where(ds_p.cicep == 1, 4, precip_mask)
+        except:
+            print(f"No precip data for f{fxx}")
 
         fig, ax = plt.subplots(figsize=(10, 7), subplot_kw={'projection': map_projection})
         ax.set_extent(ZOOM_BOUNDS, crs=ccrs.PlateCarree())
         ax.add_feature(cfeature.STATES, edgecolor='black', linewidth=0.5)
-        
         p_cmap = ListedColormap(['none', '#2ecc71', '#3498db', '#e74c3c', '#e67e22'])
-        ax.pcolormesh(ds.longitude, ds.latitude, np.ma.masked_where(precip_mask == 0, precip_mask),
+        ax.pcolormesh(ds_t.longitude, ds_t.latitude, np.ma.masked_where(precip_mask == 0, precip_mask),
                      transform=ccrs.PlateCarree(), cmap=p_cmap, vmin=0, vmax=4)
-        
         plt.title(f"HRRR Precip f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
         plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
         plt.close()
@@ -91,4 +96,4 @@ for fxx in range(max_fxx + 1):
         print(f"Success: f{fxx:02d}")
 
     except Exception as e:
-        print(f"Skipping f{fxx:02d} due to error: {e}")
+        print(f"Skipping f{fxx:02d}: {e}")
