@@ -1,5 +1,6 @@
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
+import sys
+print(sys.path) # This will print where Python is looking for libraries
+from herbie import Herbie
 from herbie import Herbie  # <--- Make sure this stays 'herbie'
 import os
 
