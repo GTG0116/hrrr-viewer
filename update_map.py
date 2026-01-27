@@ -7,7 +7,17 @@ import os
 # 1. Fetch the data (fxx=0 is the most recent analysis)
 # We use 'priority=['aws']' to ensure it pulls from the Amazon cloud
 try:
-    H = Herbie(model='hrrr', product='sfc', fxx=0, priority=['aws'])
+from datetime import datetime, timedelta
+
+# Try the current hour, if not available, try the previous hour
+try:
+    now = datetime.utcnow()
+    H = Herbie(now.strftime('%Y-%m-%d %H:00'), model='hrrr', product='sfc', fxx=0, priority=['aws'])
+except Exception:
+    yesterday = datetime.utcnow() - timedelta(hours=1)
+    H = Herbie(yesterday.strftime('%Y-%m-%d %H:00'), model='hrrr', product='sfc', fxx=0, priority=['aws'])
+
+ds = H.xarray("TMP:2 m")
     ds = H.xarray("TMP:2 m") # Pulls 2-meter temperature
     
     # 2. Process Data (Kelvin to Fahrenheit)
