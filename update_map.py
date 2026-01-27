@@ -4,19 +4,27 @@ from herbie import Herbie
 from datetime import datetime, timedelta
 import os
 
-# 1. Logic to find the most recent HRRR data
-try:
-    # Try the current hour
-    now = datetime.utcnow()
-    date_str = now.strftime('%Y-%m-%d %H:00')
-    print(f"Attempting to fetch data for: {date_str}")
-    H = Herbie(date_str, model='hrrr', product='sfc', fxx=0, priority=['aws'])
-except Exception as e:
-    # If the current hour isn't on AWS yet, try the previous hour
-    print(f"Current hour not found, trying previous hour. Error: {e}")
-    yesterday = datetime.utcnow() - timedelta(hours=1)
-    date_str = yesterday.strftime('%Y-%m-%d %H:00')
-    H = Herbie(date_str, model='hrrr', product='sfc', fxx=0, priority=['aws'])
+# 1. Logic to find the most RECENT available HRRR data
+H = None
+# We will try the current hour, then 1 hour ago, then 2 hours ago
+for offset in range(3):
+    try:
+        search_time = datetime.utcnow() - timedelta(hours=offset)
+        date_str = search_time.strftime('%Y-%m-%d %H:00')
+        print(f"Checking for data at: {date_str}...")
+        
+        test_H = Herbie(date_str, model='hrrr', product='sfc', fxx=0, priority=['aws'])
+        
+        # Try to load the index to verify it exists
+        if test_H.inventory() is not None:
+            H = test_H
+            print(f"Success! Using data from: {date_str}")
+            break
+    except Exception as e:
+        print(f"Data not ready for {date_str}, trying previous hour...")
+
+if H is None:
+    raise Exception("Could not find any HRRR data from the last 3 hours.")
 
 # 2. Decode the GRIB2 data
 ds = H.xarray("TMP:2 m")
@@ -27,13 +35,17 @@ fig = plt.figure(figsize=(12, 7))
 ax = plt.axes(projection=ds.herbie.crs)
 ax.coastlines(resolution='50m', color='black', linewidth=1)
 
+# This adds state borders to make the map useful
+import cartopy.feature as cfeature
+ax.add_feature(cfeature.STATES.with_scale('50m'), edgecolor='gray', linewidth=0.5)
+
 # Add temperature data
 plot = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, 
-                     transform=ccrs.PlateCarree(), cmap='RdYlBu_r')
+                     transform=ccrs.PlateCarree(), cmap='jet')
 
 plt.colorbar(plot, label="Temperature (°F)", orientation='vertical', pad=0.02)
-plt.title(f"HRRR 2m Temperature - Valid: {H.date}")
+plt.title(f"HRRR 2m Temperature - Valid: {H.date} UTC")
 
 # 4. Save the final image
 plt.savefig("latest_hrrr.png", dpi=150, bbox_inches='tight')
-print("Map generated and saved as latest_hrrr.png")
+print("Map successfully saved as latest_hrrr.png")
