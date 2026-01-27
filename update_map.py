@@ -6,69 +6,72 @@ from datetime import datetime, timedelta
 import pytz
 import os
 import numpy as np
+import xarray as xr
 from matplotlib.colors import ListedColormap
 
 # --- CONFIGURATION ---
 ZOOM_BOUNDS = [-82, -67, 37, 48] # [West, East, South, North]
 
-# 1. Find the most recent COMPLETED HRRR run
+# 1. Find the most recent available HRRR run
 H_init = None
-# We search back up to 12 hours to find a 'Major' run if needed
-for offset in range(12):
+for offset in range(24): # Search back a full day if necessary
     try:
         search_time = datetime.utcnow() - timedelta(hours=offset)
-        # Major runs are 00, 06, 12, 18. Minor runs are everything else.
         date_str = search_time.strftime('%Y-%m-%d %H:00')
-        print(f"Searching for run: {date_str}...")
+        print(f"Checking for data at: {date_str}...")
         
         test_H = Herbie(date_str, model='hrrr', product='sfc', fxx=0, priority=['aws'])
         
-        # Check if index exists
+        # Test if we can actually get the inventory (the index file)
         if test_H.inventory() is not None:
             H_init = test_H
-            print(f"Found active run at {date_str}")
+            print(f"Success! Using run initialized at: {date_str}")
             break
     except:
         continue
 
-if not H_init: raise Exception("No HRRR data found on AWS.")
+if not H_init:
+    raise Exception("Could not find any valid HRRR data on AWS in the last 24 hours.")
 
-# Determine if this is a 48h or 18h run
-init_hour = int(H_init.date.strftime('%H'))
-max_fxx = 48 if init_hour in [0, 6, 12, 18] else 18
-
+# Create folders
 os.makedirs("frames_temp", exist_ok=True)
 os.makedirs("frames_precip", exist_ok=True)
+
+# Determine forecast length
+init_hour = int(H_init.date.strftime('%H'))
+max_fxx = 48 if init_hour in [0, 6, 12, 18] else 18
+print(f"Generating {max_fxx} frames...")
 
 # 2. Loop through frames
 for fxx in range(max_fxx + 1):
     try:
+        # Re-initialize Herbie for each forecast hour
         H = Herbie(H_init.date.strftime('%Y-%m-%d %H:00'), 
                    model='hrrr', product='sfc', fxx=fxx, priority=['aws'])
         
-        # Pull Data
+        # Pull Temperature and Precip Types
+        # Using a list of variables is safer than a regex string here
         ds = H.xarray("(:TMP:2 m|:CSNOW:|:CICEP:|:CFRZR:|:CRAIN:)")
         
-        # Handle the 'list' error by always selecting the first dataset
+        # Merge if it returned a list of datasets
         if isinstance(ds, list):
-            # Merge list if multiple hypercubes exist
-            import xarray as xr
             ds = xr.merge(ds)
 
-        temp_f = (ds.t2m - 273.15) * 9/5 + 32
-        
+        # Setup plot metadata
         utc_v = H.valid_date.replace(tzinfo=pytz.UTC)
         et_v = utc_v.astimezone(pytz.timezone('US/Eastern'))
-        timestamp = f"Valid: {utc_v.strftime('%m/%d %H:%M')}Z ({et_v.strftime('%I:%M %p ET')})"
+        timestamp = f"Valid: {utc_v.strftime('%m/%d %H:%M')}Z | {et_v.strftime('%I:%M %p ET')}"
 
         # --- MAP 1: TEMPERATURE ---
+        temp_f = (ds.t2m - 273.15) * 9/5 + 32
         fig, ax = plt.subplots(figsize=(10, 7), subplot_kw={'projection': H.crs})
         if ZOOM_BOUNDS: ax.set_extent(ZOOM_BOUNDS, crs=ccrs.PlateCarree())
         ax.add_feature(cfeature.STATES, edgecolor='black', linewidth=0.5)
+        
         im = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, transform=ccrs.PlateCarree(), 
                           cmap='jet', vmin=0, vmax=100)
-        plt.colorbar(im, label="Temp (°F)", orientation='horizontal', pad=0.05)
-        plt.title(f"HRRR Temp f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
+        plt.colorbar(im, label="Temperature (°F)", orientation='horizontal', pad=0.05)
+        plt.title(f"HRRR Temperature f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
         plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=90)
         plt.close()
 
@@ -82,14 +85,16 @@ for fxx in range(max_fxx + 1):
         fig, ax = plt.subplots(figsize=(10, 7), subplot_kw={'projection': H.crs})
         if ZOOM_BOUNDS: ax.set_extent(ZOOM_BOUNDS, crs=ccrs.PlateCarree())
         ax.add_feature(cfeature.STATES, edgecolor='black', linewidth=0.5)
+        
         p_cmap = ListedColormap(['none', '#2ecc71', '#3498db', '#e74c3c', '#e67e22'])
         ax.pcolormesh(ds.longitude, ds.latitude, np.ma.masked_where(precip_mask == 0, precip_mask),
                      transform=ccrs.PlateCarree(), cmap=p_cmap, vmin=0, vmax=4)
-        plt.title(f"HRRR Precip f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
+        
+        plt.title(f"HRRR Precip Type f{fxx:02d}\n{timestamp}", loc='left', fontweight='bold')
         plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=90)
         plt.close()
         
-        print(f"Success: f{fxx:02d}")
+        print(f"Successfully generated frame f{fxx:02d}")
 
     except Exception as e:
-        print(f"Skipping f{fxx}: Data not yet available on AWS.")
+        print(f"Skipping frame f{fxx:02d}: {e}")
