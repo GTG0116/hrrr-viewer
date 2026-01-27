@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
-from herbie import Herbie
+from herbie import herbie  # <--- Make sure this stays 'herbie'
 import os
 
 # 1. Fetch the data (fxx=0 is the most recent analysis)
