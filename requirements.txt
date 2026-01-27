@@ -1,4 +1,5 @@
-herbie-data
+herbie-data[extras]
+metpy
 cartopy
 matplotlib
 xarray
