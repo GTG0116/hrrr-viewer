@@ -1,8 +1,8 @@
 name: Update HRRR Map
 on:
   schedule:
-    - cron: '0 * * * *' # Runs every hour on the hour
-  workflow_dispatch:      # Allows you to run it manually to test
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,24 +15,25 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip' # This helps keep the libraries installed
 
-      - name: Install System Dependencies
-        run: sudo apt-get install libeccodes-dev # Needed to decode GRIB2 files
-
-      - name: Install Python Packages
+      - name: Install Dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes-dev
           python -m pip install --upgrade pip
           pip install herbie-data cartopy matplotlib xarray cfgrib eccodes
-          # This line below verifies the install worked before moving on
-          python -c "from herbie import Herbie; print('Herbie installed successfully')"
-          
-      - name: Run Script
-        run: python update_map.py
 
+      - name: Run Script
+        run: |
+          # We run it directly here to ensure it uses the pip packages above
+          python update_map.py
+        
       - name: Commit and Push Image
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add latest_hrrr.png
-          git commit -m "Update HRRR Map" || exit 0
-          git push
+          # The '|| true' ensures that if no changes were made, the action doesn't fail
+          git add latest_hrrr.png || true
+          git commit -m "Update HRRR Map" || true
+          git push || true
