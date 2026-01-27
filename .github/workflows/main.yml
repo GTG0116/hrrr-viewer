@@ -1,4 +1,5 @@
 name: Update HRRR Map
+
 on:
   schedule:
     - cron: '0 * * * *'
@@ -8,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Make sure this is present and correctly indented!
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -31,6 +32,7 @@ jobs:
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
+          # The || true ensures this step doesn't crash if there are no changes
           git add frames_temp/*.png frames_precip/*.png || true
           git commit -m "Update HRRR Maps" --allow-empty || true
           git push
