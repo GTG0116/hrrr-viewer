@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # This ensures the bot can save the images
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -15,20 +17,20 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-dev
-          python -m pip install --upgrade pip
           pip install "herbie-data[extras]" metpy cartopy matplotlib xarray cfgrib eccodes pytz
 
       - name: Run Script
-        run: |
-          python update_map.py
+        run: python update_map.py
         
-      - name: Clear Old Frames
+      - name: Commit and Push
         run: |
-          rm -rf frames_temp/*.png
-          rm -rf frames_precip/*.png
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add frames_temp/*.png frames_precip/*.png || true
+          git commit -m "Update HRRR Maps" --allow-empty || true
+          git push
