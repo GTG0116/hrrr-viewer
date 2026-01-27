@@ -5,6 +5,13 @@ from herbie import Herbie
 from datetime import datetime, timedelta
 import pytz
 import os
+import numpy as np
+
+# --- CONFIGURATION ---
+# Change these to zoom in ([West, East, South, North])
+# Example for Northeast US: [-82, -67, 37, 48]
+# Set to None for full Lower 48
+ZOOM_BOUNDS = [-82, -67, 37, 48] 
 
 # 1. Find latest data
 H_init = None
@@ -19,43 +26,63 @@ for offset in range(4):
     except:
         continue
 
-if not H_init:
-    raise Exception("Could not find recent HRRR data.")
+if not H_init: raise Exception("No HRRR data found.")
 
 init_hour = int(H_init.date.strftime('%H'))
 max_fxx = 48 if init_hour in [0, 6, 12, 18] else 18
 os.makedirs("frames", exist_ok=True)
 
-# 2. Loop and generate frames
+# 2. Loop through frames
 for fxx in range(max_fxx + 1):
     try:
         H = Herbie(H_init.date.strftime('%Y-%m-%d %H:00'), 
                    model='hrrr', product='sfc', fxx=fxx, priority=['aws'])
         
-        ds = H.xarray("TMP:2 m")
+        # Pull Temperature AND Precip Types
+        ds = H.xarray("(:TMP:2 m|:CSNOW:|:CICEP:|:CFRZR:|:CRAIN:)")
         temp_f = (ds.t2m - 273.15) * 9/5 + 32
 
-        utc_valid = H.valid_date.replace(tzinfo=pytz.UTC)
-        et_valid = utc_valid.astimezone(pytz.timezone('US/Eastern'))
+        # Create a single Precip Type mask
+        # Priority: Ice > Freezing Rain > Snow > Rain
+        precip_mask = np.zeros_like(temp_f)
+        if hasattr(ds, 'crain'): precip_mask = np.where(ds.crain == 1, 1, precip_mask)
+        if hasattr(ds, 'csnow'): precip_mask = np.where(ds.csnow == 1, 2, precip_mask)
+        if hasattr(ds, 'cfrzr'): precip_mask = np.where(ds.cfrzr == 1, 3, precip_mask)
+        if hasattr(ds, 'cicep'): precip_mask = np.where(ds.cicep == 1, 4, precip_mask)
 
-        fig = plt.figure(figsize=(10, 6))
+        # Plotting
+        fig = plt.figure(figsize=(12, 8), facecolor='white')
         ax = plt.axes(projection=ds.herbie.crs)
-        ax.add_feature(cfeature.STATES.with_scale('50m'), edgecolor='black', linewidth=0.5)
         
-        # Consistent color scale so the animation doesn't flicker
-        plot = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, 
-                             transform=ccrs.PlateCarree(), cmap='jet', vmin=-10, vmax=110)
+        if ZOOM_BOUNDS:
+            ax.set_extent(ZOOM_BOUNDS, crs=ccrs.PlateCarree())
+
+        ax.add_feature(cfeature.STATES.with_scale('50m'), edgecolor='black', linewidth=0.7)
+        ax.add_feature(cfeature.LAKES.with_scale('50m'), edgecolor='blue', linewidth=0.5, alpha=0.3)
+
+        # Background: Temperature
+        temp_plot = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, 
+                                 transform=ccrs.PlateCarree(), cmap='RdYlBu_r', 
+                                 vmin=0, vmax=100, alpha=0.8)
         
-        plt.colorbar(plot, label="Temp (°F)", orientation='horizontal', pad=0.08)
+        # Overlay: Precip Type (using a custom discrete map)
+        # 1=Rain(Green), 2=Snow(Blue), 3=FRZR(Red), 4=Ice(Orange)
+        from matplotlib.colors import ListedColormap
+        precip_cmap = ListedColormap(['none', '#2ecc71', '#3498db', '#e74c3c', '#e67e22'])
+        ax.pcolormesh(ds.longitude, ds.latitude, np.ma.masked_where(precip_mask == 0, precip_mask),
+                     transform=ccrs.PlateCarree(), cmap=precip_cmap, vmin=0, vmax=4)
 
-        title_str = (f"HRRR Init: {H.date.strftime('%m/%d %H:%M')} UTC\n"
-                     f"Valid: {utc_valid.strftime('%m/%d %H:%M')} UTC | {et_valid.strftime('%I:%M %p %Z')}\n"
-                     f"Forecast Hour: f{fxx:02d}")
-        plt.title(title_str, loc='left', fontweight='bold', fontsize=9)
+        # Labels & Time
+        utc_v = H.valid_date.replace(tzinfo=pytz.UTC)
+        et_v = utc_v.astimezone(pytz.timezone('US/Eastern'))
+        
+        plt.title(f"HRRR Temp + Precip Type | Init: {H.date.strftime('%H:%M')}Z\n"
+                  f"Valid: {utc_v.strftime('%m/%d %H:%M')}Z ({et_v.strftime('%I:%M %p ET')})", 
+                  loc='left', fontweight='bold')
 
-        plt.savefig(f"frames/frame_{fxx:02d}.png", dpi=90, bbox_inches='tight')
+        plt.savefig(f"frames/frame_{fxx:02d}.png", dpi=100, bbox_inches='tight')
         plt.close()
-        print(f"Finished f{fxx:02d}")
+        print(f"Done f{fxx:02d}")
 
     except Exception as e:
-        print(f"Skipping f{fxx}: {e}")
+        print(f"Error f{fxx}: {e}")
