@@ -1,5 +1,6 @@
-herbie
+herbie-data
 cartopy
 matplotlib
 xarray
 cfgrib
+eccodes
