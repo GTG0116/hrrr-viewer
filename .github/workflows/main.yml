@@ -32,6 +32,6 @@ jobs:
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add frames_temp/*.png frames_precip/*.png || true
+          git add frames_temp/*.png frames_precip/*.png frames_wind/*.png frames_gust/*.png frames_snow/*.png frames_total_precip/*.png || true
           git commit -m "Update HRRR Maps" --allow-empty || true
           git push
