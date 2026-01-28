@@ -2,7 +2,7 @@ name: Update HRRR Map
 
 on:
   schedule:
-    - cron: '45 * * * *' # Runs at minute 45 of every hour
+    - cron: '35 * * * *' # Runs at minute 45 of every hour
   workflow_dispatch:
 
 jobs:
