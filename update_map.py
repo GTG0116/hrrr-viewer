@@ -1,123 +1,117 @@
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-import cartopy.io.shapereader as shpreader
 from herbie import Herbie
-from datetime import datetime, timedelta
-import pytz
-import os
 import numpy as np
 import xarray as xr
 from matplotlib.colors import ListedColormap, BoundaryNorm
-import matplotlib.patches as mpatches
-import warnings
+import os
 
-# Suppress annoying warnings
-warnings.filterwarnings("ignore")
+# --- CONFIGURATION & DIRECTORIES ---
+folders = ["frames_temp", "frames_chill", "frames_wind", "frames_gust", "frames_total_precip"]
+for f in folders: os.makedirs(f, exist_ok=True)
 
-# --- CONFIGURATION ---
 EXTENTS = [-80.5, -71.5, 38.5, 43.5] 
 MAP_CRS = ccrs.LambertConformal(central_longitude=-76.0, central_latitude=41.0)
 
-# Pre-load County Shapes
-try:
-    reader = shpreader.Reader(shpreader.natural_earth(resolution='10m', category='cultural', name='admin_2_counties'))
-    counties = list(reader.records())
-except:
-    counties = []
+# --- BRANDED COLOR PALETTES ---
 
-# --- COLOR PALETTES (FROM SCREENSHOTS) ---
-
-# Wind & Gust Palette (image_ec51d1.png)
+# Wind & Gust Palette (Based on image_ec51d1.png)
 WIND_COLORS = [
-    '#1e466e', '#2c69b0', '#4292c6', '#6baed6', '#9ecae1', # 0-40
+    '#1a468a', '#2c6eb5', '#4294c7', '#6baed6', '#9ecae1', # 0-40
     '#c6dbef', '#e5f5e0', '#a1d99b', '#74c476', '#31a354', # 40-80
-    '#fd8d3c', '#f03b20', '#bd0026', '#800026', '#49006a', # 80-120
-    '#f768a1', '#fa9fb5', '#fcc5c0', '#fee0d2', '#ffffff'  # 120-170+
+    '#ff9933', '#ff3300', '#990000', '#660000', '#4d004d', # 80-120
+    '#ff99cc', '#ff66cc', '#ff33cc', '#ff00cc', '#ff66ff'  # 120-170+
 ]
 WIND_LEVELS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 200]
 
-# Temperature & Wind Chill Palette (image_ec4e17.png)
+# Temp & Chill Palette (Based on image_ec4e17.png)
 TEMP_COLORS = [
-    '#7a0177', '#ae017e', '#dd3497', '#f768a1', '#fbb4b9', # -60 to -20
-    '#fee0d2', '#ffffff', '#e0f3f8', '#abd9e9', '#74add1', # -20 to 20
-    '#4575b4', '#313695', '#00441b', '#006d2c', '#238b45', # 20 to 60
-    '#41ab5d', '#74c476', '#a1d99b', '#e5f5e0', '#ffffcc', # 60 to 80
-    '#fed976', '#feb24c', '#fd8d3c', '#f03b20', '#bd0026', # 80 to 110
-    '#800026', '#49006a'                                  # 110 to 120+
+    '#990033', '#cc0066', '#ff0099', '#ff66cc', '#ffccff', # -60 to -30
+    '#e6e6fa', '#ccccff', '#9999ff', '#6666ff', '#0000cc', # -30 to 0
+    '#003399', '#0066cc', '#3399ff', '#66ccff', '#99ffff', # 0 to 30
+    '#009999', '#006633', '#009933', '#33cc33', '#99ff99', # 30 to 60
+    '#ccff99', '#ffff99', '#ffff00', '#ffcc00', '#ff9900', # 60 to 90
+    '#ff6600', '#ff3300', '#cc0000', '#990000', '#4d0000'  # 90 to 120+
 ]
-TEMP_LEVELS = list(range(-60, 130, 5)) # Detailed 5-degree increments
+TEMP_LEVELS = list(range(-60, 131, 6)) # 30 colors mapped to 6-degree steps
 
-# Total Precip Palette (No White - Gap filled with light green/blue)
+# Total Precip Palette (NO WHITE - Gap filled with light lime)
 PRECIP_COLORS = [
-    '#ffffff00', # Transparent (0)
-    '#ccff99', '#99ff33', '#00cc00', '#006600', '#004d66', # 0.01 to 1.0
-    '#3399ff', '#00ffff', '#9999ff', '#9933ff', '#cc33ff', # 1.0 to 2.5
-    '#990000', '#cc0000', '#ff3300', '#ff9900', '#cc6600'  # 3.0 to 50.0
+    '#ccff99', '#99ff33', '#33cc33', '#009933', '#006600', # 0.01 - 0.75
+    '#004d66', '#0099cc', '#33ccff', '#9999ff', '#9933ff', # 0.75 - 2.0
+    '#cc33ff', '#990000', '#cc0000', '#ff3300', '#ff9900'  # 2.0 - 20.0
 ]
-PRECIP_LEVELS = [0, 0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0, 50.0]
+PRECIP_LEVELS = [0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 5.0, 10.0, 15.0, 20.0]
 
-# --- HELPERS ---
-
-def get_data_array(ds):
-    if isinstance(ds, list): ds = xr.merge(ds, compat='override')
-    vars = [v for v in ds.data_vars]
-    if not vars: raise ValueError("No data variables found")
-    return ds, ds[vars[0]]
+# --- CORE LOGIC ---
 
 def setup_map(title):
     fig = plt.figure(figsize=(12, 10), facecolor='#020617')
     ax = plt.axes(projection=MAP_CRS)
     ax.set_extent(EXTENTS, crs=ccrs.PlateCarree())
-    ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='black', linewidth=1.2, zorder=2)
-    ax.add_feature(cfeature.ShapelyFeature([c.geometry for c in counties], ccrs.PlateCarree()), 
-                   facecolor='none', edgecolor='gray', linewidth=0.4, alpha=0.6, zorder=1)
-    plt.title(title, loc='left', fontweight='bold', fontsize=12, color='white')
+    ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='black', linewidth=1.5, zorder=3)
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), edgecolor='black', linewidth=1.5, zorder=3)
+    plt.title(title, loc='left', fontweight='bold', fontsize=14, color='white', pad=10)
     return fig, ax
 
-# --- DATA SEARCH & MAIN LOOP ---
-# (Search logic remains the same as previous version)
-# ... [Herbie Search Logic] ...
+# 1. Initialize Herbie to find the latest model run
+try:
+    # Attempt to find the most recent available run
+    H_init = Herbie(model='hrrr', product='sfc', priority=['aws', 'nomads'])
+    print(f"Using Model Init: {H_init.date}")
+except Exception as e:
+    print(f"Critical Error: Could not initialize Herbie. {e}")
+    exit()
 
+# 2. Process Frames 1-18
 for fxx in range(1, 19):
-    H = Herbie(H_init.date.strftime('%Y-%m-%d %H:00'), model='hrrr', fxx=fxx)
-    t_str = f"Valid: {H.valid_date.strftime('%m/%d %I:%M %p')}"
-
-    # 1. TEMPERATURE & WIND CHILL
-    for param, folder, name in [("TMP:2 m", "frames_temp", "Temperature"), (":WCHILL:", "frames_chill", "Wind Chill")]:
-        try:
-            ds_raw = H.xarray(param, verbose=False)
-            ds, var = get_data_array(ds_raw)
-            data_f = (var - 273.15) * 9/5 + 32
-            fig, ax = setup_map(f"HRRR 2m {name} (°F) | {t_str}")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, data_f, transform=ccrs.PlateCarree(), 
-                               cmap=ListedColormap(TEMP_COLORS), norm=BoundaryNorm(TEMP_LEVELS, len(TEMP_COLORS)))
-            plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
-            plt.close()
-        except: continue
-
-    # 2. WIND & GUSTS (Using Wind Palette)
-    for param, folder, name in [(":(UGRD|VGRD):10 m", "frames_wind", "Wind Speed"), (":GUST:surface", "frames_gust", "Wind Gust")]:
-        try:
-            ds_raw = H.xarray(param, verbose=False)
-            ds, var = get_data_array(ds_raw)
-            # Calculate speed if U/V, otherwise use direct gust var
-            speed = (np.sqrt(ds['u10']**2 + ds['v10']**2) * 2.237) if 'u10' in ds else (var * 2.237)
-            fig, ax = setup_map(f"HRRR {name} (mph) | {t_str}")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, speed, transform=ccrs.PlateCarree(), 
-                               cmap=ListedColormap(WIND_COLORS), norm=BoundaryNorm(WIND_LEVELS, len(WIND_COLORS)))
-            plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
-            plt.close()
-        except: continue
-
-    # 3. TOTAL PRECIP (No White Scale)
     try:
-        ds_raw = H.xarray(":APCP:surface", verbose=False)
-        ds, var = get_data_array(ds_raw)
-        precip_in = var * 0.03937
-        fig, ax = setup_map(f"HRRR Total Precip (in) | {t_str}")
-        im = ax.pcolormesh(ds.longitude, ds.latitude, precip_in, transform=ccrs.PlateCarree(), 
-                           cmap=ListedColormap(PRECIP_COLORS), norm=BoundaryNorm(PRECIP_LEVELS, len(PRECIP_COLORS)))
-        plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+        # Redefine H for each lead time based on the initialized run
+        H = Herbie(H_init.date, model='hrrr', product='sfc', fxx=fxx)
+        valid_t = H.valid_date.strftime('%m/%d %I:%M %p')
+        
+        # --- TEMP & CHILL ---
+        for param, folder, name in [("TMP:2 m", "frames_temp", "Temperature"), (":WCHILL:", "frames_chill", "Wind Chill")]:
+            ds = H.xarray(param)
+            data = (ds[list(ds.data_vars)[0]] - 273.15) * 9/5 + 32
+            fig, ax = setup_map(f"HRRR {name} (°F) | {valid_t}")
+            ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), 
+                          cmap=ListedColormap(TEMP_COLORS), norm=BoundaryNorm(TEMP_LEVELS, len(TEMP_COLORS)))
+            plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=90, bbox_inches='tight', facecolor='#020617')
+            plt.close()
+
+        # --- WIND & GUST ---
+        # Wind requires U and V components; Gust is a single surface variable
+        for mode in ['wind', 'gust']:
+            if mode == 'wind':
+                ds = H.xarray(":(UGRD|VGRD):10 m")
+                speed = np.sqrt(ds.u10**2 + ds.v10**2) * 2.237
+                name, folder = "Wind Speed", "frames_wind"
+            else:
+                ds = H.xarray(":GUST:surface")
+                speed = ds.gust * 2.237
+                name, folder = "Wind Gust", "frames_gust"
+            
+            fig, ax = setup_map(f"HRRR {name} (mph) | {valid_t}")
+            ax.pcolormesh(ds.longitude, ds.latitude, speed, transform=ccrs.PlateCarree(), 
+                          cmap=ListedColormap(WIND_COLORS), norm=BoundaryNorm(WIND_LEVELS, len(WIND_COLORS)))
+            plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=90, bbox_inches='tight', facecolor='#020617')
+            plt.close()
+
+        # --- TOTAL PRECIP ---
+        ds = H.xarray(":APCP:surface")
+        precip = ds.tp * 0.03937
+        fig, ax = setup_map(f"HRRR Total Precip (in) | {valid_t}")
+        # Mask out 0 values so background shows through (Clear), then use colors starting at 0.01
+        precip_masked = precip.where(precip >= 0.01)
+        ax.pcolormesh(ds.longitude, ds.latitude, precip_masked, transform=ccrs.PlateCarree(), 
+                      cmap=ListedColormap(PRECIP_COLORS), norm=BoundaryNorm(PRECIP_LEVELS, len(PRECIP_COLORS)))
+        plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight', facecolor='#020617')
         plt.close()
-    except: continue
+
+        print(f"Completed Frame f{fxx:02d}")
+
+    except Exception as e:
+        print(f"Error processing frame f{fxx:02d}: {e}")
+        continue
