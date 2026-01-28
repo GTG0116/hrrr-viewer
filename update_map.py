@@ -16,9 +16,10 @@ warnings.filterwarnings("ignore")
 EXTENTS = [-80.5, -71.5, 38.5, 43.5] 
 MAP_CRS = ccrs.LambertConformal(central_longitude=-76.0, central_latitude=41.0)
 
-# --- BRANDED COLOR PALETTES ---
+# --- CORRECTED COLOR PALETTES ---
 
-# Wind & Gust Palette (image_ec51d1.png) - 18 levels, 17 colors
+# Wind & Gust Palette (Matches image_ec51d1.png)
+# 18 Levels require 17 Colors
 WIND_COLORS = [
     '#1e466e', '#2c69b0', '#4292c6', '#6baed6', '#9ecae1', 
     '#c6dbef', '#e5f5e0', '#a1d99b', '#74c476', '#31a354', 
@@ -27,7 +28,8 @@ WIND_COLORS = [
 ]
 WIND_LEVELS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170]
 
-# Temperature & Wind Chill Palette (image_ec4e17.png) - 37 levels, 36 colors
+# Temperature & Wind Chill (Matches image_ec4e17.png)
+# 37 Levels require 36 Colors
 TEMP_COLORS = [
     '#7a0177', '#ae017e', '#dd3497', '#f768a1', '#fbb4b9', '#fee0d2', '#ffffff', 
     '#e0f3f8', '#abd9e9', '#74add1', '#4575b4', '#313695', '#00441b', '#006d2c', 
@@ -37,21 +39,14 @@ TEMP_COLORS = [
 ]
 TEMP_LEVELS = list(range(-60, 121, 5))
 
-# Total Precip Palette (Screenshot 2026-01-27 215251.png) - No White
+# Total Precip Palette (Matches Screenshot 2026-01-27 215251.png)
+# Removed white; gap between 0 and 0.1 is filled with lime (#ccff99)
 PRECIP_COLORS = [
     '#ccff99', '#99ff33', '#00cc00', '#006600', '#004d66', 
     '#3399ff', '#00ffff', '#9999ff', '#9933ff', '#cc33ff', 
     '#990000', '#cc0000', '#ff3300', '#ff9900', '#cc6600'
 ]
 PRECIP_LEVELS = [0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0, 20.0]
-
-# Snowfall Palette (Screenshot 2026-01-27 215020.png)
-SNOW_COLORS = [
-    '#d1e5f0', '#92c5de', '#4393c3', '#2166ac', '#053061', 
-    '#ffffbf', '#fed976', '#feb24c', '#fd8d3c', '#f03b20', 
-    '#bd0026', '#800026', '#49000a', '#d8daeb', '#b2abd2'
-]
-SNOW_LEVELS = [0.1, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36, 48, 60, 72, 100]
 
 # --- HELPERS ---
 
@@ -63,7 +58,7 @@ def setup_map(title):
     plt.title(title, loc='left', fontweight='bold', fontsize=12, color='white')
     return fig, ax
 
-# --- INITIALIZATION ---
+# --- INITIALIZATION (Fixes H_init NameError) ---
 H_init = None
 for offset in range(12):
     try:
@@ -74,7 +69,9 @@ for offset in range(12):
             break
     except: continue
 
-if not H_init: exit(1)
+if not H_init: 
+    print("Error: Could not find recent HRRR data.")
+    exit(1)
 
 folders = ["frames_temp", "frames_chill", "frames_precip", "frames_wind", "frames_gust", "frames_snow", "frames_total_precip"]
 for f in folders: os.makedirs(f, exist_ok=True)
@@ -117,8 +114,9 @@ for fxx in range(1, 19):
         ds_p = H.xarray(":C(RAIN|FREEZ|ICEP|SNOW):surface", verbose=False)
         ptype = ds_p.crain*1 + ds_p.cfrzr*2 + ds_p.icep*3 + ds_p.csnow*4
         fig, ax = setup_map(f"HRRR Precip Type | {valid_t}")
+        # Snow category updated to a deep midnight blue (#001f3f)
         ax.pcolormesh(ds_p.longitude, ds_p.latitude, ptype.where(ptype > 0), transform=ccrs.PlateCarree(), 
-                      cmap=ListedColormap(['#33ff33', '#ff9900', '#ff0000', '#003366']), # Dark blue for snow
+                      cmap=ListedColormap(['#33ff33', '#ff9900', '#ff0000', '#001f3f']), 
                       norm=BoundaryNorm([0.5, 1.5, 2.5, 3.5, 4.5], 4))
         plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
         plt.close()
@@ -132,15 +130,6 @@ for fxx in range(1, 19):
         plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
         plt.close()
 
-        # 6. TOTAL SNOWFALL
-        ds_s = H.xarray(":ASNOW:surface", verbose=False)
-        snow = ds_s['asnow'] * 39.37
-        fig, ax = setup_map(f"HRRR Total Snow (in) | {valid_t}")
-        ax.pcolormesh(ds_s.longitude, ds_s.latitude, snow.where(snow >= 0.1), transform=ccrs.PlateCarree(), 
-                      cmap=ListedColormap(SNOW_COLORS), norm=BoundaryNorm(SNOW_LEVELS, len(SNOW_COLORS)))
-        plt.savefig(f"frames_snow/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
-        plt.close()
-
-        print(f"Completed f{fxx:02d}")
+        print(f"Completed Frame f{fxx:02d}")
     except Exception as e:
-        print(f"Error f{fxx:02d}: {e}")
+        print(f"Error on frame f{fxx:02d}: {e}")
