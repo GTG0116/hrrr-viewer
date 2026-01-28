@@ -1,338 +1,221 @@
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import cartopy.io.shapereader as shpreader
+from herbie import Herbie
+from datetime import datetime, timedelta
+import pytz
+import os
+import numpy as np
+import xarray as xr
+from matplotlib.colors import ListedColormap, BoundaryNorm
+import matplotlib.patches as mpatches
+import warnings
 
-<div class="dashboard-container">
-    <div class="glass-card">
-        <div class="header">
-            <div class="title-group">
-                <span class="sub-title">HRRR MODEL • NORTHEAST SECTOR</span>
-                <h1 id="mode-display">Temperature (°F)</h1>
-            </div>
+# Suppress annoying warnings
+warnings.filterwarnings("ignore")
+
+# --- CONFIGURATION ---
+EXTENTS = [-80.5, -71.5, 38.5, 43.5] # Focused Northeast (PA/NY/NJ/MD/DE)
+MAP_CRS = ccrs.LambertConformal(central_longitude=-76.0, central_latitude=41.0)
+
+# Pre-load County Shapes for labels and borders
+try:
+    reader = shpreader.Reader(shpreader.natural_earth(resolution='10m', category='cultural', name='admin_2_counties'))
+    counties = list(reader.records())
+except:
+    counties = []
+
+# --- HELPERS ---
+
+def get_data_array(ds):
+    """Safely extracts the first data variable regardless of its name to prevent crashes."""
+    if isinstance(ds, list):
+        ds = xr.merge(ds, compat='override')
+    # Filter out coordinate variables to find the actual data
+    vars = [v for v in ds.data_vars]
+    if not vars:
+        raise ValueError("No data variables found in dataset")
+    return ds, ds[vars[0]]
+
+def draw_county_labels(ax, ds, data_var, fmt="{:.0f}", color='black', check_val=None):
+    """Samples data at the center of each county and draws a label."""
+    view_w, view_e, view_s, view_n = EXTENTS
+    for county in counties:
+        geom = county.geometry
+        bounds = geom.bounds
+        # Only process counties in the current view
+        if bounds[2] < view_w or bounds[0] > view_e or bounds[3] < view_s or bounds[1] > view_n:
+            continue
+        
+        centroid = geom.centroid
+        lon, lat = centroid.x, centroid.y
+        
+        try:
+            # Sample the data at the county center
+            val = float(data_var.sel(latitude=lat, longitude=lon, method='nearest').values)
+            if check_val is not None and val < check_val: 
+                continue
             
-            <select id="modeSelect" onchange="setMode(this.value)">
-                <option value="frames_temp">Temperature</option>
-                <option value="frames_precip">Precip Type</option>
-                <option value="frames_wind">Wind Speed</option>
-                <option value="frames_gust">Wind Gusts</option>
-                <option value="frames_snow">Total Snowfall</option>
-                <option value="frames_total_precip">Total Precip</option>
-            </select>
-        </div>
+            ax.text(lon, lat, fmt.format(val), transform=ccrs.PlateCarree(),
+                    ha='center', va='center', fontsize=6, fontweight='bold',
+                    color=color, clip_on=True, zorder=10)
+        except:
+            continue
 
-        <div class="viewer-area">
-            <div id="loading" class="spinner"></div>
-            <img id="viewer" src="https://raw.githubusercontent.com/GTG0116/hrrr-viewer/main/frames_temp/f01.png" onload="hideLoad()">
-        </div>
+def add_precip_legend(ax):
+    """Adds a legend identifying Rain, Snow, Sleet, and Freezing Rain."""
+    handles = [
+        mpatches.Patch(color='#e67e22', label='Rain'),
+        mpatches.Patch(color='#08306b', label='Snow'),
+        mpatches.Patch(color='#6a51a3', label='Sleet'),
+        mpatches.Patch(color='#ae017e', label='Frz. Rain')
+    ]
+    ax.legend(handles=handles, loc='lower left', fontsize=8, facecolor='white', framealpha=0.9)
 
-        <div class="controls-grid">
-            <div class="play-section">
-                <button id="playBtn" onclick="togglePlay()" class="btn-main">
-                    <span id="playIcon">▶</span> PLAY
-                </button>
-                <div class="frame-counter">HOUR: <span id="frame-num">f01</span></div>
-            </div>
+def get_precip_cmap():
+    """Flipped snow intensity: Light blue = Light Snow, Dark blue = Heavy Snow."""
+    colors = ['#ffffff00'] # Transparent for no precip
+    colors.extend(['#3498db', '#2ecc71', '#f1c40f', '#e67e22', '#e74c3c']) # Rain
+    colors.extend(['#deebf7', '#6baed6', '#2171b5', '#08519c', '#08306b']) # SNOW (Light to Dark)
+    colors.extend(['#efedf5', '#9e9ac8', '#6a51a3', '#54278f', '#3f007d']) # Sleet
+    colors.extend(['#fbb4b9', '#f768a1', '#dd3497', '#ae017e', '#7a0177']) # Ice
+    return ListedColormap(colors)
 
-            <div class="slider-group">
-                <label class="control-label">FORECAST TIMELINE</label>
-                <input type="range" id="frameSlider" min="1" max="18" value="1" oninput="updateFrame(this.value)">
-                <div class="slider-labels">
-                    <span>Current</span>
-                    <span>+18h Forecast</span>
-                </div>
-            </div>
+def setup_map(title):
+    fig = plt.figure(figsize=(12, 10))
+    ax = plt.axes(projection=MAP_CRS)
+    ax.set_extent(EXTENTS, crs=ccrs.PlateCarree())
+    
+    # Add States and County borders
+    ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='black', linewidth=1.2, zorder=2)
+    ax.add_feature(cfeature.ShapelyFeature([c.geometry for c in counties], ccrs.PlateCarree()), 
+                   facecolor='none', edgecolor='gray', linewidth=0.4, alpha=0.6, zorder=1)
+    
+    plt.title(title, loc='left', fontweight='bold', fontsize=12)
+    return fig, ax
 
-            <div class="slider-group">
-                <label class="control-label">LOOP SPEED</label>
-                <input type="range" id="speedSlider" min="100" max="1500" value="600" step="50" dir="rtl" oninput="updateSpeed(this.value)">
-                <div class="slider-labels">
-                    <span>Fast</span>
-                    <span>Slow</span>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+# --- DATA SEARCH ---
+H_init = None
+print("Searching for latest HRRR run...")
+for offset in range(24):
+    try:
+        search_time = datetime.utcnow() - timedelta(hours=offset)
+        test_H = Herbie(search_time.strftime('%Y-%m-%d %H:00'), model='hrrr', fxx=1)
+        if test_H.inventory() is not None:
+            H_init = test_H
+            print(f"Using run: {search_time.strftime('%Y-%m-%d %H:00')}")
+            break
+    except: continue
 
-<style>
-    :root {
-        --bg-deep: #020617;
-        --navy-glass: rgba(15, 23, 42, 0.85);
-        --navy-solid: #1e293b;
-        --electric-blue: #38bdf8;
-        --border-glass: rgba(255, 255, 255, 0.15);
-        --font-heavy: 'Montserrat', sans-serif;
-    }
+if not H_init: 
+    print("Could not find any HRRR data!")
+    exit(1)
 
-    /* Reset & Full Background */
-    body, html {
-        margin: 0;
-        padding: 0;
-        height: 100%;
-        background-color: var(--bg-deep);
-    }
+# Ensure folders exist
+folders = ["frames_temp", "frames_precip", "frames_wind", "frames_gust", "frames_snow", "frames_total_precip"]
+for folder in folders: os.makedirs(folder, exist_ok=True)
 
-    .dashboard-container {
-        background: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
-        min-height: 100vh;
-        width: 100%;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 20px;
-        box-sizing: border-box;
-    }
+# --- GENERATION LOOP ---
+for fxx in range(1, 19):
+    try:
+        H = Herbie(H_init.date.strftime('%Y-%m-%d %H:00'), model='hrrr', fxx=fxx)
+        utc_v = H.valid_date.replace(tzinfo=pytz.UTC)
+        et_v = utc_v.astimezone(pytz.timezone('US/Eastern'))
+        t_str = f"Valid: {et_v.strftime('%m/%d %I:%M %p ET')}"
 
-    /* Modern Glass UI */
-    .glass-card {
-        background: var(--navy-glass);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid var(--border-glass);
-        border-radius: 32px;
-        width: 100%;
-        max-width: 950px;
-        padding: 35px;
-        box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.8);
-    }
+        # 1. TEMPERATURE (2m)
+        try:
+            ds_raw = H.xarray("TMP:2 m", verbose=False)
+            ds, temp_k = get_data_array(ds_raw)
+            temp_f = (temp_k - 273.15) * 9/5 + 32
+            fig, ax = setup_map(f"HRRR 2m Temperature (°F) | {t_str}")
+            im = ax.pcolormesh(ds.longitude, ds.latitude, temp_f, transform=ccrs.PlateCarree(), cmap='jet', vmin=0, vmax=100)
+            plt.colorbar(im, fraction=0.046, pad=0.04)
+            draw_county_labels(ax, ds, temp_f)
+            plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+            plt.close()
+        except Exception as e: print(f"Temp Error: {e}")
 
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-end;
-        margin-bottom: 30px;
-    }
+        # 2. PRECIP TYPE (Flipped Snow Intensity)
+        try:
+            ds_p = H.xarray(":(REFC|CRAIN|CSNOW|CFRZR|CICEP):", verbose=False)
+            if isinstance(ds_p, list): ds_p = xr.merge(ds_p)
+            refc = ds_p.refc.values
+            intensity = np.clip((refc / 10).astype(int), 0, 4)
+            final_map = np.zeros_like(refc)
+            if 'crain' in ds_p: final_map = np.where(ds_p.crain == 1, 1 + intensity, final_map)
+            if 'csnow' in ds_p: final_map = np.where(ds_p.csnow == 1, 6 + intensity, final_map)
+            if 'cicep' in ds_p: final_map = np.where(ds_p.cicep == 1, 11 + intensity, final_map)
+            if 'cfrzr' in ds_p: final_map = np.where(ds_p.cfrzr == 1, 16 + intensity, final_map)
+            fig, ax = setup_map(f"HRRR Precip Type | {t_str}")
+            cmap = get_precip_cmap()
+            ax.pcolormesh(ds_p.longitude, ds_p.latitude, np.ma.masked_where(final_map==0, final_map),
+                          transform=ccrs.PlateCarree(), cmap=cmap, norm=BoundaryNorm(np.arange(0, 22), cmap.N))
+            add_precip_legend(ax)
+            plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+            plt.close()
+        except Exception as e: print(f"P-Type Error: {e}")
 
-    .sub-title {
-        color: var(--electric-blue);
-        font-family: var(--font-heavy);
-        font-size: 0.75rem;
-        letter-spacing: 4px;
-        font-weight: 900;
-        text-transform: uppercase;
-        margin-bottom: 6px;
-        display: block;
-    }
+        # 3. WIND SPEED (10m)
+        try:
+            ds_w = H.xarray(":(UGRD|VGRD):10 m", verbose=False)
+            if isinstance(ds_w, list): ds_w = xr.merge(ds_w)
+            u = ds_w['u10'] if 'u10' in ds_w else ds_w['u']
+            v = ds_w['v10'] if 'v10' in ds_w else ds_w['v']
+            ws = np.sqrt(u**2 + v**2) * 1.944
+            fig, ax = setup_map(f"HRRR Wind Speed (kts) | {t_str}")
+            im = ax.pcolormesh(ds_w.longitude, ds_w.latitude, ws, transform=ccrs.PlateCarree(), cmap='BuPu', vmin=0, vmax=50)
+            plt.colorbar(im, fraction=0.046, pad=0.04)
+            draw_county_labels(ax, ds_w, ws, check_val=5)
+            plt.savefig(f"frames_wind/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+            plt.close()
+        except Exception as e: print(f"Wind Error: {e}")
 
-    /* THICK FONT MATCHING EPHRATA WEATHER LOGO */
-    h1 {
-        color: #ffffff;
-        margin: 0;
-        font-family: var(--font-heavy);
-        font-size: 2.2rem;
-        font-weight: 900;
-        letter-spacing: -1.5px;
-        text-transform: uppercase;
-    }
+        # 4. WIND GUSTS
+        try:
+            ds_raw = H.xarray(":GUST:surface", verbose=False)
+            ds, gust_var = get_data_array(ds_raw)
+            gust_kts = gust_var * 1.944
+            fig, ax = setup_map(f"HRRR Wind Gust (kts) | {t_str}")
+            im = ax.pcolormesh(ds.longitude, ds.latitude, gust_kts, transform=ccrs.PlateCarree(), cmap='Reds', vmin=0, vmax=60)
+            plt.colorbar(im, fraction=0.046, pad=0.04)
+            draw_county_labels(ax, ds, gust_kts, check_val=15)
+            plt.savefig(f"frames_gust/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+            plt.close()
+        except Exception as e: print(f"Gust Error: {e}")
 
-    /* DROPDOWN VISIBILITY FIX */
-    select {
-        background: var(--navy-solid);
-        color: white;
-        font-family: var(--font-heavy);
-        font-weight: 800;
-        border: 2px solid var(--electric-blue);
-        padding: 12px 20px;
-        border-radius: 14px;
-        outline: none;
-        cursor: pointer;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
+        # 5. TOTAL SNOWFALL (NWS Scale)
+        try:
+            ds_raw = H.xarray(":ASNOW:surface", verbose=False)
+            ds, snow_var = get_data_array(ds_raw)
+            snow_in = snow_var * 39.37
+            snow_colors = ['#ffffff00', '#d1e3f3', '#95cbee', '#529dcc', '#1c64a5', '#08306b', '#ffffcc', '#ffeda0', '#feb24c', '#f03b20', '#bd0026', '#7f0000', '#4d0000', '#cbc9e2', '#9e9ac8', '#6a51a3']
+            snow_levels = [0, 0.1, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36, 48, 60, 72, 100]
+            snow_cmap = ListedColormap(snow_colors)
+            fig, ax = setup_map(f"HRRR Total Snow (in) | {t_str}")
+            im = ax.pcolormesh(ds.longitude, ds.latitude, snow_in, transform=ccrs.PlateCarree(), cmap=snow_cmap, norm=BoundaryNorm(snow_levels, len(snow_colors)))
+            plt.colorbar(im, fraction=0.046, pad=0.04)
+            draw_county_labels(ax, ds, snow_in, fmt="{:.1f}", check_val=0.1)
+            plt.savefig(f"frames_snow/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+            plt.close()
+        except Exception as e: print(f"Snow Error: {e}")
 
-    select option {
-        background: #0f172a; /* Force dark background for options */
-        color: white;
-        padding: 10px;
-    }
+        # 6. TOTAL PRECIP (High-Res Scale)
+        try:
+            ds_raw = H.xarray(":APCP:surface", verbose=False)
+            ds, precip_var = get_data_array(ds_raw)
+            precip_in = precip_var * 0.03937
+            tp_colors = ['#ffffff00', '#ffffff', '#99ff33', '#00cc00', '#006600', '#004d66', '#3399ff', '#00ffff', '#9999ff', '#9933ff', '#cc33ff', '#990000', '#cc0000', '#ff3300', '#ff9900', '#cc6600', '#cc9933', '#ffff00', '#ff9999']
+            tp_levels = [0, 0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0, 50.0]
+            fig, ax = setup_map(f"HRRR Total Precip (in) | {t_str}")
+            im = ax.pcolormesh(ds.longitude, ds.latitude, precip_in, transform=ccrs.PlateCarree(), cmap=ListedColormap(tp_colors), norm=BoundaryNorm(tp_levels, len(tp_colors)))
+            plt.colorbar(im, fraction=0.046, pad=0.04)
+            draw_county_labels(ax, ds, precip_in, fmt="{:.2f}", check_val=0.01)
+            plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=90, bbox_inches='tight')
+            plt.close()
+        except Exception as e: print(f"Total Precip Error: {e}")
 
-    /* Map Display */
-    .viewer-area {
-        position: relative;
-        background: #000;
-        border-radius: 24px;
-        overflow: hidden;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        aspect-ratio: 16 / 10;
-        box-shadow: inset 0 0 40px rgba(0,0,0,1);
-    }
-
-    #viewer {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-    }
-
-    /* Playback Grid */
-    .controls-grid {
-        margin-top: 35px;
-        display: grid;
-        grid-template-columns: 180px 1fr 200px;
-        gap: 30px;
-        align-items: center;
-    }
-
-    .btn-main {
-        background: var(--electric-blue);
-        color: #020617;
-        font-family: var(--font-heavy);
-        font-weight: 900;
-        border: none;
-        padding: 14px;
-        border-radius: 16px;
-        cursor: pointer;
-        width: 100%;
-        transition: 0.3s;
-        box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
-    }
-
-    .btn-main:hover {
-        transform: scale(1.05);
-        background: #7dd3fc;
-    }
-
-    .frame-counter {
-        color: #64748b;
-        font-family: var(--font-heavy);
-        font-weight: 900;
-        font-size: 0.8rem;
-        text-align: center;
-        margin-top: 10px;
-    }
-
-    .control-label {
-        display: block;
-        color: var(--electric-blue);
-        font-family: var(--font-heavy);
-        font-weight: 900;
-        font-size: 0.65rem;
-        margin-bottom: 12px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-
-    /* High-End Sliders */
-    input[type=range] {
-        -webkit-appearance: none;
-        width: 100%;
-        background: transparent;
-    }
-
-    input[type=range]::-webkit-slider-runnable-track {
-        height: 8px;
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 4px;
-    }
-
-    input[type=range]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        height: 24px;
-        width: 24px;
-        border-radius: 50%;
-        background: #fff;
-        border: 4px solid var(--electric-blue);
-        cursor: pointer;
-        margin-top: -8px;
-        box-shadow: 0 0 20px rgba(56, 189, 248, 0.6);
-    }
-
-    .slider-labels {
-        display: flex;
-        justify-content: space-between;
-        color: #475569;
-        font-family: var(--font-heavy);
-        font-weight: 800;
-        font-size: 0.7rem;
-        margin-top: 12px;
-    }
-
-    .spinner {
-        display: none;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 60px;
-        height: 60px;
-        border: 6px solid rgba(255, 255, 255, 0.05);
-        border-top: 6px solid var(--electric-blue);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        transform: translate(-50%, -50%);
-    }
-
-    @keyframes spin { 100% { transform: translate(-50%, -50%) rotate(360deg); } }
-
-    @media (max-width: 800px) {
-        .controls-grid { grid-template-columns: 1fr; gap: 25px; }
-        h1 { font-size: 1.6rem; }
-    }
-</style>
-
-<script>
-    let currentFolder = 'frames_temp';
-    let currentFrame = 1;
-    let isPlaying = false;
-    let playInterval;
-    let loopDelay = 600; // Default speed in ms
-
-    const modeNames = {
-        'frames_temp': 'Temperature (°F)',
-        'frames_precip': 'Precip Type',
-        'frames_wind': 'Wind Speed (kts)',
-        'frames_gust': 'Wind Gusts (kts)',
-        'frames_snow': 'Total Snowfall (in)',
-        'frames_total_precip': 'Total Precip'
-    };
-
-    function setMode(folder) {
-        currentFolder = folder;
-        document.getElementById('mode-display').innerText = modeNames[folder];
-        update();
-    }
-
-    function updateFrame(val) {
-        currentFrame = parseInt(val);
-        document.getElementById('frame-num').innerText = `f${currentFrame.toString().padStart(2, '0')}`;
-        update();
-    }
-
-    function updateSpeed(val) {
-        loopDelay = parseInt(val);
-        // If playing, restart interval with new speed immediately
-        if (isPlaying) {
-            clearInterval(playInterval);
-            startLoop();
-        }
-    }
-
-    function update() {
-        document.getElementById('loading').style.display = 'block';
-        const frameStr = currentFrame.toString().padStart(2, '0');
-        const url = `https://raw.githubusercontent.com/GTG0116/hrrr-viewer/main/${currentFolder}/f${frameStr}.png`;
-        document.getElementById('viewer').src = url;
-    }
-
-    function hideLoad() {
-        document.getElementById('loading').style.display = 'none';
-    }
-
-    function startLoop() {
-        playInterval = setInterval(() => {
-            currentFrame++;
-            if (currentFrame > 18) currentFrame = 1;
-            document.getElementById('frameSlider').value = currentFrame;
-            document.getElementById('frame-num').innerText = `f${currentFrame.toString().padStart(2, '0')}`;
-            update();
-        }, loopDelay);
-    }
-
-    function togglePlay() {
-        const btn = document.getElementById('playBtn');
-        if (isPlaying) {
-            clearInterval(playInterval);
-            btn.innerHTML = '<span>▶</span> PLAY';
-            isPlaying = false;
-        } else {
-            isPlaying = true;
-            btn.innerHTML = '<span>⏸</span> PAUSE';
-            startLoop();
-        }
-    }
-</script>
+        print(f"Completed f{fxx}")
+    except Exception as e:
+        print(f"Fatal error on f{fxx}: {e}")
