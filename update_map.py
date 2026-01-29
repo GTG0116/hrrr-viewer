@@ -18,7 +18,7 @@ EXTENTS = [-80.5, -71.5, 38.5, 43.5]
 MAP_CRS = ccrs.LambertConformal(central_longitude=-76.0, central_latitude=41.0)
 SAVE_DIR = os.path.join(os.getcwd(), "herbie_data")
 
-# --- COLOR PALETTES (UNCHANGED) ---
+# --- COLOR PALETTES ---
 WIND_COLORS = ['#1e466e', '#2c69b0', '#4292c6', '#6baed6', '#9ecae1', '#c6dbef', '#e5f5e0', '#a1d99b', '#74c476', '#31a354', '#fd8d3c', '#f03b20', '#bd0026', '#800026', '#49006a', '#f768a1', '#fa9fb5']
 WIND_LEVELS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170]
 
@@ -37,6 +37,15 @@ try:
     counties = list(reader.records())
 except: counties = []
 
+# --- HELPERS ---
+
+def safe_get_ds(H, search_str):
+    """Retrieves dataset and forces merge if Herbie returns a list (Fixes 'no attribute' errors)."""
+    ds = H.xarray(search_str, verbose=False)
+    if isinstance(ds, list):
+        return xr.merge(ds, compat='override')
+    return ds
+
 def draw_county_labels(ax, ds, data_var, fmt="{:.0f}", check_val=None):
     view_w, view_e, view_s, view_n = EXTENTS
     for county in counties:
@@ -52,13 +61,13 @@ def draw_county_labels(ax, ds, data_var, fmt="{:.0f}", check_val=None):
         except: continue
 
 def setup_plot(H, fxx, datatype):
-    """Sets up the figure with the custom title layout."""
+    """Sets up the figure with date including Year and Ephrata branding."""
     fig = plt.figure(figsize=(12, 10), facecolor='#020617')
     ax = plt.axes(projection=MAP_CRS)
     ax.set_extent(EXTENTS, crs=ccrs.PlateCarree())
     ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='black', linewidth=1.5, zorder=3)
     
-    # Times
+    # Time Conversion
     init_dt = H.date.replace(tzinfo=pytz.UTC)
     valid_dt = H.valid_date.replace(tzinfo=pytz.UTC)
     valid_et = valid_dt.astimezone(pytz.timezone('US/Eastern'))
@@ -67,15 +76,15 @@ def setup_plot(H, fxx, datatype):
     plt.text(0, 1.02, f"HRRR: {datatype}", transform=ax.transAxes, 
              fontsize=14, color='white', fontweight='bold', ha='left')
     
-    # Top Right: Run Info
-    run_str = f"Run: {init_dt.strftime('%d/%H')}Z | F{fxx:02d}"
-    valid_str = f"Valid: {valid_dt.strftime('%d/%H')}Z ({valid_et.strftime('%I %p')} ET)"
-    plt.text(1, 1.02, f"{run_str} | {valid_str}", transform=ax.transAxes, 
-             fontsize=10, color='white', ha='right', weight='bold')
+    # Top Right: Run Info (With Year)
+    run_str = f"Run: {init_dt.strftime('%m/%d/%Y %H')}Z | F{fxx:02d}"
+    valid_str = f"Valid: {valid_dt.strftime('%m/%d/%Y %H')}Z / {valid_et.strftime('%m/%d %I:%M %p')} ET"
+    plt.text(1, 1.02, f"{run_str}\n{valid_str}", transform=ax.transAxes, 
+             fontsize=9, color='white', ha='right', weight='bold')
 
     # Bottom Branding
-    plt.text(0.5, -0.05, "Ephrata Weather", transform=ax.transAxes,
-             fontsize=14, color='white', fontweight='bold', ha='center', va='top')
+    plt.text(0.5, -0.08, "Ephrata Weather", transform=ax.transAxes,
+             fontsize=16, color='white', fontweight='bold', ha='center', va='top')
 
     return fig, ax
 
@@ -84,25 +93,24 @@ def save_plot(fig, folder, fxx):
     plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=90, bbox_inches='tight', facecolor='#020617')
     plt.close()
 
-# --- 1. FIND LATEST *COMPLETE* RUN ---
+# --- 1. FIND LATEST *COMPLETED* RUN ---
 H_init = None
-# We search back 12 hours. For each run, we verify f18 exists.
+# Look back 12 hours. We only accept a run if we can find the inventory for hour 18.
 for offset in range(12):
     try:
         search_time = datetime.utcnow() - timedelta(hours=offset)
-        # Check if f18 (end of our loop) exists for this run
+        # We test fxx=18. If this exists, the full 1-18 run is likely ready.
         test_H = Herbie(search_time.strftime('%Y-%m-%d %H:00'), model='hrrr', fxx=18, save_dir=SAVE_DIR)
         
-        # Checking inventory is the "ping" to see if file exists on server
         if test_H.inventory() is not None:
-            H_init = test_H # Found a run where f18 is ready!
-            print(f"Found complete run: {search_time.strftime('%Y-%m-%d %H:00')}Z")
+            H_init = test_H
+            print(f"Found latest completed run: {search_time.strftime('%Y-%m-%d %H:00')}Z")
             break
     except:
         continue
 
 if not H_init:
-    print("Error: Could not find a run with data out to f18.")
+    print("Error: Could not find a completed HRRR run (checked last 12 hours).")
     exit(1)
 
 # --- 2. GENERATION LOOP ---
@@ -112,95 +120,106 @@ for fxx in range(1, 19):
 
         # A. TEMPERATURE
         try:
-            ds = H.xarray("TMP:2 m", verbose=False)
+            ds = safe_get_ds(H, "TMP:2 m")
             data = (ds.t2m - 273.15) * 9/5 + 32
             fig, ax = setup_plot(H, fxx, "Temperature (°F)")
             im = ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), 
                              cmap=ListedColormap(TEMP_COLORS), norm=BoundaryNorm(TEMP_LEVELS, len(TEMP_COLORS)))
             draw_county_labels(ax, ds, data, fmt="{:.0f}")
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9)
+            # Colorbar with ticks
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=TEMP_LEVELS[::2])
+            cbar.ax.tick_params(colors='white', labelsize=8)
             save_plot(fig, "frames_temp", fxx)
         except: pass
 
         # B. WIND CHILL
         try:
-            ds = H.xarray(":WCHILL:surface", verbose=False)
-            # Sometimes variable is 'wjh' or 'wchill'
+            ds = safe_get_ds(H, ":WCHILL:surface")
             var = ds[list(ds.data_vars)[0]]
             data = (var - 273.15) * 9/5 + 32
             fig, ax = setup_plot(H, fxx, "Wind Chill (°F)")
             im = ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), 
                              cmap=ListedColormap(TEMP_COLORS), norm=BoundaryNorm(TEMP_LEVELS, len(TEMP_COLORS)))
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9)
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=TEMP_LEVELS[::2])
+            cbar.ax.tick_params(colors='white', labelsize=8)
             save_plot(fig, "frames_chill", fxx)
         except: pass
 
         # C. WIND SPEED
         try:
-            ds = H.xarray(":(UGRD|VGRD):10 m", verbose=False)
+            ds = safe_get_ds(H, ":(UGRD|VGRD):10 m")
             ws = np.sqrt(ds.u10**2 + ds.v10**2) * 2.237
             fig, ax = setup_plot(H, fxx, "Wind Speed (mph)")
             im = ax.pcolormesh(ds.longitude, ds.latitude, ws, transform=ccrs.PlateCarree(), 
                              cmap=ListedColormap(WIND_COLORS), norm=BoundaryNorm(WIND_LEVELS, len(WIND_COLORS)))
             draw_county_labels(ax, ds, ws, fmt="{:.0f}", check_val=10)
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9)
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=WIND_LEVELS[::2])
+            cbar.ax.tick_params(colors='white', labelsize=8)
             save_plot(fig, "frames_wind", fxx)
         except: pass
 
         # D. WIND GUSTS
         try:
-            ds = H.xarray(":GUST:surface", verbose=False)
+            ds = safe_get_ds(H, ":GUST:surface")
             gusts = ds.gust * 2.237
             fig, ax = setup_plot(H, fxx, "Wind Gusts (mph)")
             im = ax.pcolormesh(ds.longitude, ds.latitude, gusts, transform=ccrs.PlateCarree(), 
                              cmap=ListedColormap(WIND_COLORS), norm=BoundaryNorm(WIND_LEVELS, len(WIND_COLORS)))
             draw_county_labels(ax, ds, gusts, fmt="{:.0f}", check_val=20)
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9)
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=WIND_LEVELS[::2])
+            cbar.ax.tick_params(colors='white', labelsize=8)
             save_plot(fig, "frames_gust", fxx)
         except: pass
 
         # E. TOTAL PRECIP
         try:
-            ds = H.xarray(":APCP:surface", verbose=False)
+            ds = safe_get_ds(H, ":APCP:surface")
             precip = ds.tp * 0.03937
             fig, ax = setup_plot(H, fxx, "Total Precip (in)")
             im = ax.pcolormesh(ds.longitude, ds.latitude, precip.where(precip >= 0.01), transform=ccrs.PlateCarree(), 
                              cmap=ListedColormap(PRECIP_COLORS), norm=BoundaryNorm(PRECIP_LEVELS, len(PRECIP_COLORS)))
             draw_county_labels(ax, ds, precip, fmt="{:.2f}", check_val=0.05)
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9)
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=PRECIP_LEVELS)
+            cbar.ax.tick_params(colors='white', labelsize=7)
             save_plot(fig, "frames_total_precip", fxx)
         except: pass
 
-        # F. PRECIP TYPE
+        # F. PRECIP TYPE (FIXED MERGE LOGIC)
         try:
-            # Broad search to find categorical vars
-            ds = H.xarray(":C(RAIN|FREEZ|ICEP|SNOW):surface", verbose=False)
-            # 1=Rain, 2=FrzRain, 3=IcePlt, 4=Snow
-            ptype = ds.crain*1 + ds.cfrzr*2 + ds.icep*3 + ds.csnow*4
+            ds = safe_get_ds(H, ":C(RAIN|FREEZ|ICEP|SNOW):surface")
+            
+            # Ensure variables exist, default to 0 if missing
+            crain = ds.crain if 'crain' in ds else xr.zeros_like(ds.longitude)
+            cfrzr = ds.cfrzr if 'cfrzr' in ds else xr.zeros_like(ds.longitude)
+            icep = ds.icep if 'icep' in ds else xr.zeros_like(ds.longitude)
+            # Sometimes snow is 'csnow'
+            csnow = ds.csnow if 'csnow' in ds else xr.zeros_like(ds.longitude)
+
+            ptype = crain*1 + cfrzr*2 + icep*3 + csnow*4
+            
             fig, ax = setup_plot(H, fxx, "Precipitation Type")
-            # Map with midnight blue snow (#001f3f)
+            # Rain (Green), Mix (Orange), Ice (Red), Snow (Midnight Blue)
             cmap = ListedColormap(['#33ff33', '#ff9900', '#ff0000', '#001f3f'])
             norm = BoundaryNorm([0.5, 1.5, 2.5, 3.5, 4.5], 4)
             im = ax.pcolormesh(ds.longitude, ds.latitude, ptype.where(ptype > 0), transform=ccrs.PlateCarree(), 
                              cmap=cmap, norm=norm)
             
-            # Custom Legend for PType
-            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9, ticks=[1, 2, 3, 4])
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=[1, 2, 3, 4])
             cbar.ax.set_xticklabels(['Rain', 'Mix', 'Ice', 'Snow'], color='white', fontweight='bold')
             save_plot(fig, "frames_precip", fxx)
         except Exception as e: 
             print(f"PType Error f{fxx}: {e}")
 
-        # G. TOTAL SNOWFALL
+        # G. TOTAL SNOWFALL (FIXED MERGE LOGIC)
         try:
-            # Try specific ASNOW var
-            ds = H.xarray(":ASNOW:surface", verbose=False)
+            ds = safe_get_ds(H, ":ASNOW:surface")
             snow = ds.asnow * 39.37
             fig, ax = setup_plot(H, fxx, "Total Snowfall (in)")
             im = ax.pcolormesh(ds.longitude, ds.latitude, snow.where(snow >= 0.1), transform=ccrs.PlateCarree(), 
                              cmap=ListedColormap(SNOW_COLORS), norm=BoundaryNorm(SNOW_LEVELS, len(SNOW_COLORS)))
             draw_county_labels(ax, ds, snow, fmt="{:.1f}", check_val=0.5)
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.08, aspect=50, shrink=0.9)
+            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.9, ticks=SNOW_LEVELS)
+            cbar.ax.tick_params(colors='white', labelsize=7)
             save_plot(fig, "frames_snow", fxx)
         except Exception as e:
             print(f"Snow Error f{fxx}: {e}")
