@@ -12,16 +12,23 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 from scipy.ndimage import gaussian_filter
 import warnings
 
+# --- GLOBAL STYLING ---
 warnings.filterwarnings("ignore")
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = ['Inter', 'Arial', 'Helvetica', 'DejaVu Sans']
 
 # --- CONFIGURATION ---
 EXTENTS = [-80.5, -71.5, 38.5, 43.5] 
 MAP_CRS = ccrs.LambertConformal(central_longitude=-76.0, central_latitude=41.0)
 SAVE_DIR = os.path.join(os.getcwd(), "herbie_data")
-SMOOTH_SIGMA = 1.2  # Applied to all maps for professional look
+SMOOTH_SIGMA = 1.2 
+
+# --- FOLDER SETUP (Run First) ---
+folders = ["frames_temp", "frames_chill", "frames_wind", "frames_gust", "frames_snow", "frames_total_precip", "frames_precip"]
+for f in folders:
+    os.makedirs(f, exist_ok=True)
 
 # --- COLOR PALETTES ---
-# Darker Snow Scale for better visibility
 SNOW_COLORS = ['#081d58', '#253494', '#225ea8', '#1d91c0', '#41b6c4', '#7fcdbb', '#c7e9b4', '#edf8b1', '#fee391', '#fec44f', '#fe9929', '#ec7014', '#cc4c02']
 SNOW_LEVELS = [0.1, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36, 48]
 
@@ -37,12 +44,10 @@ PRECIP_LEVELS = [0, 0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 
 # --- HELPERS ---
 
 def robust_get_data(H, search_list):
-    """Tries multiple search strings and forces a merge to fix loading errors."""
     for search in search_list:
         try:
             ds = H.xarray(search, verbose=False)
-            if isinstance(ds, list):
-                ds = xr.merge(ds, compat='override')
+            if isinstance(ds, list): ds = xr.merge(ds, compat='override')
             if ds is not None: return ds
         except: continue
     return None
@@ -57,7 +62,7 @@ def draw_labels(ax, ds, data_var, fmt="{:.0f}", check_val=None):
             val = float(data_var.sel(latitude=lat, longitude=lon, method='nearest').values)
             if check_val is not None and val < check_val: continue
             ax.text(lon, lat, fmt.format(val), transform=ccrs.PlateCarree(),
-                    ha='center', va='center', fontsize=6, fontweight='bold', color='black', zorder=10)
+                    ha='center', va='center', fontsize=6, fontweight='800', color='black', zorder=10)
     except: pass
 
 def setup_plot(H, fxx, datatype):
@@ -70,18 +75,15 @@ def setup_plot(H, fxx, datatype):
     valid_dt = H.valid_date.replace(tzinfo=pytz.UTC)
     valid_et = valid_dt.astimezone(pytz.timezone('US/Eastern'))
     
-    # Brand Header (High and centered to avoid overlap)
-    plt.text(0.5, 1.07, "EPHRATA WEATHER", transform=ax.transAxes, fontsize=18, color='white', fontweight='black', ha='center')
-    plt.text(0, 1.02, f"HRRR: {datatype}", transform=ax.transAxes, fontsize=14, color='white', ha='left', fontweight='bold')
+    # Clean Header Design
+    plt.text(0.5, 1.08, "EPHRATA WEATHER", transform=ax.transAxes, fontsize=22, color='white', fontweight='900', ha='center')
+    plt.text(0, 1.02, f"HRRR | {datatype}", transform=ax.transAxes, fontsize=14, color='#94a3b8', ha='left', fontweight='600')
     
     time_str = f"Run: {init_dt.strftime('%m/%d/%Y %H')}Z | F{fxx:02d}\nValid: {valid_dt.strftime('%m/%d/%Y %H')}Z ({valid_et.strftime('%m/%d %I:%M %p')} ET)"
-    plt.text(1, 1.02, time_str, transform=ax.transAxes, fontsize=9, color='white', ha='right', weight='bold')
+    plt.text(1, 1.02, time_str, transform=ax.transAxes, fontsize=10, color='white', ha='right', weight='bold')
     return fig, ax
 
-# --- INITIALIZATION ---
-folders = ["frames_temp", "frames_chill", "frames_wind", "frames_gust", "frames_snow", "frames_total_precip", "frames_precip"]
-for f in folders: os.makedirs(f, exist_ok=True)
-
+# --- FIND LATEST RUN ---
 H_init = None
 for offset in range(12):
     try:
@@ -98,27 +100,36 @@ for fxx in range(1, 19):
     try:
         H = Herbie(H_init.date, model='hrrr', fxx=fxx, save_dir=SAVE_DIR)
         
-        # 1. TEMPERATURE (Smoothed)
-        ds = robust_get_data(H, ["TMP:2 m"])
-        if ds:
-            data = gaussian_filter((ds.t2m - 273.15) * 9/5 + 32, sigma=SMOOTH_SIGMA)
-            fig, ax = setup_plot(H, fxx, "2m Temperature (°F)")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), cmap='magma')
+        # Pull core data for maps and manual calculations
+        ds_t = robust_get_data(H, ["TMP:2 m"])
+        ds_w = robust_get_data(H, [":(UGRD|VGRD):10 m"])
+        
+        # 1. TEMPERATURE
+        if ds_t:
+            temp_f = (ds_t.t2m - 273.15) * 9/5 + 32
+            data = gaussian_filter(temp_f, sigma=SMOOTH_SIGMA)
+            fig, ax = setup_plot(H, fxx, "Surface Temperature (°F)")
+            im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, data, transform=ccrs.PlateCarree(), cmap='magma')
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
-            draw_labels(ax, ds, xr.DataArray(data, coords=ds.coords))
+            draw_labels(ax, ds_t, xr.DataArray(data, coords=ds_t.coords))
             plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
 
-        # 2. WIND CHILL (Smoothed)
-        ds = robust_get_data(H, [":WCHILL:surface", ":WCHILL:2 m"])
-        if ds:
-            var = ds[list(ds.data_vars)[0]]
-            data = gaussian_filter((var - 273.15) * 9/5 + 32, sigma=SMOOTH_SIGMA)
+        # 2. WIND CHILL (Calculated Fallback)
+        if ds_t and ds_w:
+            t_f = (ds_t.t2m - 273.15) * 9/5 + 32
+            v_mph = np.sqrt(ds_w.u10**2 + ds_w.v10**2) * 2.237
+            # NWS Wind Chill Formula
+            chill = 35.74 + (0.6215 * t_f) - (35.75 * (v_mph**0.16)) + (0.4275 * t_f * (v_mph**0.16))
+            # Wind chill only defined for T <= 50F and V >= 3mph
+            chill = xr.where((t_f <= 50) & (v_mph >= 3), chill, t_f)
+            data = gaussian_filter(chill, sigma=SMOOTH_SIGMA)
+            
             fig, ax = setup_plot(H, fxx, "Wind Chill (°F)")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), cmap='coolwarm')
+            im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, data, transform=ccrs.PlateCarree(), cmap='coolwarm')
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
             plt.savefig(f"frames_chill/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
 
-        # 3. WIND SPEED & GUSTS (Smoothed)
+        # 3. WIND SPEED & GUSTS
         for tag, folder, title in [(":GUST:surface", "frames_gust", "Wind Gusts (mph)"), (":(UGRD|VGRD):10 m", "frames_wind", "Wind Speed (mph)")]:
             ds = robust_get_data(H, [tag])
             if ds:
@@ -130,44 +141,43 @@ for fxx in range(1, 19):
                 draw_labels(ax, ds, xr.DataArray(data, coords=ds.coords), check_val=15)
                 plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
 
-        # 4. TOTAL PRECIP (Smoothed)
-        ds = robust_get_data(H, [":APCP:surface"])
-        if ds:
-            data = gaussian_filter(ds.tp * 0.03937, sigma=SMOOTH_SIGMA)
+        # 4. TOTAL PRECIP 
+        ds_tp = robust_get_data(H, [":APCP:surface"])
+        if ds_tp:
+            data = gaussian_filter(ds_tp.tp * 0.03937, sigma=SMOOTH_SIGMA)
             fig, ax = setup_plot(H, fxx, "Total Precipitation (in)")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, np.where(data > 0.01, data, np.nan), 
+            im = ax.pcolormesh(ds_tp.longitude, ds_tp.latitude, np.where(data > 0.01, data, np.nan), 
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(PRECIP_COLORS), norm=BoundaryNorm(PRECIP_LEVELS, len(PRECIP_COLORS)))
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
-            draw_labels(ax, ds, xr.DataArray(data, coords=ds.coords), fmt="{:.2f}", check_val=0.1)
+            draw_labels(ax, ds_tp, xr.DataArray(data, coords=ds_tp.coords), fmt="{:.2f}", check_val=0.1)
             plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
 
-        # 5. PRECIP TYPE & INTENSITY (Smoothed)
-        ds = robust_get_data(H, [":(REFC|CRAIN|CSNOW|CFRZR|CICEP):"])
-        if ds:
-            refc = gaussian_filter(ds.refc.values, sigma=SMOOTH_SIGMA)
+        # 5. PRECIP TYPE (Intensity Based)
+        ds_pt = robust_get_data(H, [":(REFC|CRAIN|CSNOW|CFRZR|CICEP):"])
+        if ds_pt:
+            refc = gaussian_filter(ds_pt.refc.values, sigma=SMOOTH_SIGMA)
             intensity = np.clip((refc / 15).astype(int), 0, 2)
             final_map = np.zeros_like(refc)
-            for i, var in enumerate(['crain', 'cfrzr', 'icep', 'csnow'], 0):
-                if var in ds: final_map = np.where(ds[var] == 1, (i*3)+1 + intensity, final_map)
-            fig, ax = setup_plot(H, fxx, "Precipitation Type & Intensity")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, np.ma.masked_where(final_map==0, final_map),
+            for i, vname in enumerate(['crain', 'cfrzr', 'icep', 'csnow'], 0):
+                if vname in ds_pt: final_map = np.where(ds_pt[vname] == 1, (i*3)+1 + intensity, final_map)
+            fig, ax = setup_plot(H, fxx, "Precip Type & Intensity")
+            im = ax.pcolormesh(ds_pt.longitude, ds_pt.latitude, np.ma.masked_where(final_map==0, final_map),
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(PTYPE_COLORS), norm=BoundaryNorm(PTYPE_LEVELS, 14))
             cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8, ticks=[2, 5, 8, 11])
             cbar.ax.set_xticklabels(['Rain', 'Mix', 'Ice', 'Snow'], color='white', fontweight='bold')
             plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
 
-        # 6. TOTAL SNOWFALL (Smoothed & Darker Scale)
-        ds = robust_get_data(H, [":ASNOW:surface", ":WEASD:surface", ":SNOD:surface"])
-        if ds:
-            raw_snow = ds[list(ds.data_vars)[0]] * 39.37
-            data = gaussian_filter(raw_snow, sigma=SMOOTH_SIGMA)
+        # 6. SNOWFALL
+        ds_s = robust_get_data(H, [":ASNOW:surface", ":WEASD:surface", ":SNOD:surface"])
+        if ds_s:
+            data = gaussian_filter(ds_s[list(ds_s.data_vars)[0]] * 39.37, sigma=SMOOTH_SIGMA)
             fig, ax = setup_plot(H, fxx, "Total Snowfall (in)")
-            im = ax.pcolormesh(ds.longitude, ds.latitude, np.where(data > 0.1, data, np.nan), 
+            im = ax.pcolormesh(ds_s.longitude, ds_s.latitude, np.where(data > 0.1, data, np.nan), 
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(SNOW_COLORS), norm=BoundaryNorm(SNOW_LEVELS, 13))
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
-            draw_labels(ax, ds, xr.DataArray(data, coords=ds.coords), fmt="{:.1f}", check_val=0.1)
+            draw_labels(ax, ds_s, xr.DataArray(data, coords=ds_s.coords), fmt="{:.1f}", check_val=0.1)
             plt.savefig(f"frames_snow/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
 
         print(f"Finished Frame f{fxx}")
     except Exception as e:
-        print(f"Error on frame f{fxx}: {e}")
+        print(f"Error on f{fxx}: {e}")
