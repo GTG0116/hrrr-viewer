@@ -2,7 +2,7 @@ name: Update HRRR Map
 
 on:
   schedule:
-    - cron: '35 * * * *' # Runs at minute 45 of every hour
+    - cron: '45 * * * *' # Runs at minute 45 of every hour
   workflow_dispatch:
 
 jobs:
@@ -27,10 +27,6 @@ jobs:
 
       - name: Run Script
         run: python update_map.py
-
-      - name: Run Script
-        run: python mrms_fetcher.py
-
         
       - name: Commit and Push
         run: |
