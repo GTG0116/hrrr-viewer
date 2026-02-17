@@ -18,10 +18,10 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['Inter', 'Arial', 'Helvetica', 'DejaVu Sans']
 
 # --- CONFIGURATION ---
-EXTENTS = [-80.5, -71.5, 38.5, 43.5] 
+EXTENTS = [-80.5, -71.5, 38.5, 43.5]
 MAP_CRS = ccrs.LambertConformal(central_longitude=-76.0, central_latitude=41.0)
 SAVE_DIR = os.path.join(os.getcwd(), "herbie_data")
-SMOOTH_SIGMA = 1.2 
+SMOOTH_SIGMA = 1.2
 
 # --- FOLDER SETUP (Run First) ---
 folders = ["frames_temp", "frames_chill", "frames_wind", "frames_gust", "frames_snow", "frames_total_precip", "frames_precip"]
@@ -29,16 +29,41 @@ for f in folders:
     os.makedirs(f, exist_ok=True)
 
 # --- COLOR PALETTES ---
-SNOW_COLORS = ['#081d58', '#253494', '#225ea8', '#1d91c0', '#41b6c4', '#7fcdbb', '#c7e9b4', '#edf8b1', '#fee391', '#fec44f', '#fe9929', '#ec7014', '#cc4c02']
+TEMP_COLORS = [
+    '#3b0764', '#5b21b6', '#1e3a8a', '#1d4ed8', '#0ea5e9',
+    '#06b6d4', '#10b981', '#22c55e', '#84cc16', '#eab308',
+    '#f97316', '#ef4444', '#dc2626', '#991b1b', '#7f1d1d']
+TEMP_LEVELS = [-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
+
+CHILL_COLORS = [
+    '#312e81', '#3730a3', '#4338ca', '#1d4ed8', '#2563eb',
+    '#3b82f6', '#06b6d4', '#14b8a6', '#22c55e', '#84cc16',
+    '#eab308', '#f97316', '#ef4444', '#dc2626', '#991b1b']
+CHILL_LEVELS = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+
+SNOW_COLORS = [
+    '#bae6fd', '#7dd3fc', '#38bdf8', '#0ea5e9', '#0284c7',
+    '#0369a1', '#1e40af', '#a855f7', '#7c3aed', '#f97316',
+    '#ef4444', '#dc2626', '#991b1b']
 SNOW_LEVELS = [0.1, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36, 48]
 
-WIND_COLORS = ['#1e466e', '#2c69b0', '#4292c6', '#6baed6', '#9ecae1', '#c6dbef', '#e5f5e0', '#a1d99b', '#74c476', '#31a354', '#fd8d3c', '#f03b20', '#bd0026', '#800026']
+WIND_COLORS = [
+    '#dbeafe', '#93c5fd', '#60a5fa', '#3b82f6', '#2563eb',
+    '#1d4ed8', '#10b981', '#059669', '#eab308', '#f97316',
+    '#ef4444', '#dc2626', '#991b1b', '#7f1d1d']
 WIND_LEVELS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
 
-PTYPE_COLORS = ['#ffffff00', '#a1d99b', '#41ab5d', '#00441b', '#fbb4b9', '#f768a1', '#7a0177', '#fee5d9', '#ef3b2c', '#67000d', '#d1e5f0', '#4393c3', '#053061']
+PTYPE_COLORS = [
+    '#ffffff00', '#86efac', '#22c55e', '#15803d',
+    '#fda4af', '#f43f5e', '#881337', '#c4b5fd', '#8b5cf6',
+    '#4c1d95', '#bae6fd', '#38bdf8', '#0c4a6e']
 PTYPE_LEVELS = np.arange(0, 14)
 
-PRECIP_COLORS = ['#ffffff00', '#ffffff', '#99ff33', '#00cc00', '#006600', '#004d66', '#3399ff', '#00ffff', '#9999ff', '#9933ff', '#cc33ff', '#990000', '#cc0000', '#ff3300', '#ff9900', '#cc6600', '#cc9933', '#ffff00', '#ff9999']
+PRECIP_COLORS = [
+    '#ffffff00', '#e0f2fe', '#7dd3fc', '#38bdf8', '#0ea5e9',
+    '#0284c7', '#0369a1', '#1d4ed8', '#a855f7', '#7c3aed',
+    '#6d28d9', '#ef4444', '#dc2626', '#b91c1c', '#f97316',
+    '#eab308', '#84cc16', '#fbbf24', '#f472b6']
 PRECIP_LEVELS = [0, 0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 7.5, 10.0, 15.0, 20.0, 25.0]
 
 # --- HELPERS ---
@@ -66,21 +91,21 @@ def draw_labels(ax, ds, data_var, fmt="{:.0f}", check_val=None):
     except: pass
 
 def setup_plot(H, fxx, datatype):
-    fig = plt.figure(figsize=(12, 11), facecolor='#020617')
+    fig = plt.figure(figsize=(12, 11), facecolor='white')
     ax = plt.axes(projection=MAP_CRS)
     ax.set_extent(EXTENTS, crs=ccrs.PlateCarree())
-    ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='black', linewidth=1.5, zorder=3)
-    
+    ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='#334155', linewidth=1.5, zorder=3)
+
     init_dt = H.date.replace(tzinfo=pytz.UTC)
     valid_dt = H.valid_date.replace(tzinfo=pytz.UTC)
     valid_et = valid_dt.astimezone(pytz.timezone('US/Eastern'))
-    
+
     # Clean Header Design
-    plt.text(0.5, 1.08, "EPHRATA WEATHER", transform=ax.transAxes, fontsize=22, color='white', fontweight='900', ha='center')
-    plt.text(0, 1.02, f"HRRR | {datatype}", transform=ax.transAxes, fontsize=14, color='#94a3b8', ha='left', fontweight='600')
-    
+    plt.text(0.5, 1.08, "EPHRATA WEATHER", transform=ax.transAxes, fontsize=22, color='#0f172a', fontweight='900', ha='center')
+    plt.text(0, 1.02, f"HRRR | {datatype}", transform=ax.transAxes, fontsize=14, color='#475569', ha='left', fontweight='600')
+
     time_str = f"Run: {init_dt.strftime('%m/%d/%Y %H')}Z | F{fxx:02d}\nValid: {valid_dt.strftime('%m/%d/%Y %H')}Z ({valid_et.strftime('%m/%d %I:%M %p')} ET)"
-    plt.text(1, 1.02, time_str, transform=ax.transAxes, fontsize=10, color='white', ha='right', weight='bold')
+    plt.text(1, 1.02, time_str, transform=ax.transAxes, fontsize=10, color='#334155', ha='right', weight='bold')
     return fig, ax
 
 # --- FIND LATEST RUN ---
@@ -99,20 +124,21 @@ if not H_init: exit("No recent HRRR data found.")
 for fxx in range(1, 19):
     try:
         H = Herbie(H_init.date, model='hrrr', fxx=fxx, save_dir=SAVE_DIR)
-        
+
         # Pull core data for maps and manual calculations
         ds_t = robust_get_data(H, ["TMP:2 m"])
         ds_w = robust_get_data(H, [":(UGRD|VGRD):10 m"])
-        
+
         # 1. TEMPERATURE
         if ds_t:
             temp_f = (ds_t.t2m - 273.15) * 9/5 + 32
             data = gaussian_filter(temp_f, sigma=SMOOTH_SIGMA)
-            fig, ax = setup_plot(H, fxx, "Surface Temperature (°F)")
-            im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, data, transform=ccrs.PlateCarree(), cmap='magma')
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
+            fig, ax = setup_plot(H, fxx, "Surface Temperature (\u00b0F)")
+            im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, data, transform=ccrs.PlateCarree(),
+                               cmap=ListedColormap(TEMP_COLORS), norm=BoundaryNorm(TEMP_LEVELS, len(TEMP_COLORS)))
+            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
             draw_labels(ax, ds_t, xr.DataArray(data, coords=ds_t.coords))
-            plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
+            plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 2. WIND CHILL (Calculated Fallback)
         if ds_t and ds_w:
@@ -123,11 +149,12 @@ for fxx in range(1, 19):
             # Wind chill only defined for T <= 50F and V >= 3mph
             chill = xr.where((t_f <= 50) & (v_mph >= 3), chill, t_f)
             data = gaussian_filter(chill, sigma=SMOOTH_SIGMA)
-            
-            fig, ax = setup_plot(H, fxx, "Wind Chill (°F)")
-            im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, data, transform=ccrs.PlateCarree(), cmap='coolwarm')
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
-            plt.savefig(f"frames_chill/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
+
+            fig, ax = setup_plot(H, fxx, "Wind Chill (\u00b0F)")
+            im = ax.pcolormesh(ds_t.longitude, ds_t.latitude, data, transform=ccrs.PlateCarree(),
+                               cmap=ListedColormap(CHILL_COLORS), norm=BoundaryNorm(CHILL_LEVELS, len(CHILL_COLORS)))
+            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
+            plt.savefig(f"frames_chill/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 3. WIND SPEED & GUSTS
         for tag, folder, title in [(":GUST:surface", "frames_gust", "Wind Gusts (mph)"), (":(UGRD|VGRD):10 m", "frames_wind", "Wind Speed (mph)")]:
@@ -137,20 +164,20 @@ for fxx in range(1, 19):
                 data = gaussian_filter(val, sigma=SMOOTH_SIGMA)
                 fig, ax = setup_plot(H, fxx, title)
                 im = ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), cmap=ListedColormap(WIND_COLORS), norm=BoundaryNorm(WIND_LEVELS, 14))
-                plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
+                plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
                 draw_labels(ax, ds, xr.DataArray(data, coords=ds.coords), check_val=15)
-                plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
+                plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
-        # 4. TOTAL PRECIP 
+        # 4. TOTAL PRECIP
         ds_tp = robust_get_data(H, [":APCP:surface"])
         if ds_tp:
             data = gaussian_filter(ds_tp.tp * 0.03937, sigma=SMOOTH_SIGMA)
             fig, ax = setup_plot(H, fxx, "Total Precipitation (in)")
-            im = ax.pcolormesh(ds_tp.longitude, ds_tp.latitude, np.where(data > 0.01, data, np.nan), 
+            im = ax.pcolormesh(ds_tp.longitude, ds_tp.latitude, np.where(data > 0.01, data, np.nan),
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(PRECIP_COLORS), norm=BoundaryNorm(PRECIP_LEVELS, len(PRECIP_COLORS)))
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
+            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
             draw_labels(ax, ds_tp, xr.DataArray(data, coords=ds_tp.coords), fmt="{:.2f}", check_val=0.1)
-            plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
+            plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 5. PRECIP TYPE (Intensity Based)
         ds_pt = robust_get_data(H, [":(REFC|CRAIN|CSNOW|CFRZR|CICEP):"])
@@ -164,19 +191,19 @@ for fxx in range(1, 19):
             im = ax.pcolormesh(ds_pt.longitude, ds_pt.latitude, np.ma.masked_where(final_map==0, final_map),
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(PTYPE_COLORS), norm=BoundaryNorm(PTYPE_LEVELS, 14))
             cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8, ticks=[2, 5, 8, 11])
-            cbar.ax.set_xticklabels(['Rain', 'Mix', 'Ice', 'Snow'], color='white', fontweight='bold')
-            plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
+            cbar.ax.set_xticklabels(['Rain', 'Mix', 'Ice', 'Snow'], color='#334155', fontweight='bold')
+            plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 6. SNOWFALL
         ds_s = robust_get_data(H, [":ASNOW:surface", ":WEASD:surface", ":SNOD:surface"])
         if ds_s:
             data = gaussian_filter(ds_s[list(ds_s.data_vars)[0]] * 39.37, sigma=SMOOTH_SIGMA)
             fig, ax = setup_plot(H, fxx, "Total Snowfall (in)")
-            im = ax.pcolormesh(ds_s.longitude, ds_s.latitude, np.where(data > 0.1, data, np.nan), 
+            im = ax.pcolormesh(ds_s.longitude, ds_s.latitude, np.where(data > 0.1, data, np.nan),
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(SNOW_COLORS), norm=BoundaryNorm(SNOW_LEVELS, 13))
-            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='white')
+            plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
             draw_labels(ax, ds_s, xr.DataArray(data, coords=ds_s.coords), fmt="{:.1f}", check_val=0.1)
-            plt.savefig(f"frames_snow/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='#020617'); plt.close()
+            plt.savefig(f"frames_snow/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         print(f"Finished Frame f{fxx}")
     except Exception as e:
