@@ -9,6 +9,7 @@ import os
 import numpy as np
 import xarray as xr
 from matplotlib.colors import ListedColormap, BoundaryNorm
+import matplotlib.patches as mpatches
 from scipy.ndimage import gaussian_filter
 import warnings
 
@@ -54,9 +55,12 @@ WIND_COLORS = [
 WIND_LEVELS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
 
 PTYPE_COLORS = [
-    '#ffffff00', '#86efac', '#22c55e', '#15803d',
-    '#fda4af', '#f43f5e', '#881337', '#c4b5fd', '#8b5cf6',
-    '#4c1d95', '#bae6fd', '#38bdf8', '#0c4a6e']
+    '#ffffff00',                        # 0: transparent (no precipitation)
+    '#4ade80', '#eab308', '#b91c1c',    # 1-3:  Rain  (light green → yellow → dark red)
+    '#f9a8d4', '#e11d48', '#881337',    # 4-6:  Mix   (light pink → rose → dark crimson)
+    '#c4b5fd', '#7c3aed', '#3b0764',    # 7-9:  Ice   (light violet → purple → deep purple)
+    '#bae6fd', '#0ea5e9', '#0c4a6e',    # 10-12: Snow  (light sky → blue → deep navy)
+]
 PTYPE_LEVELS = np.arange(0, 14)
 
 PRECIP_COLORS = [
@@ -65,6 +69,20 @@ PRECIP_COLORS = [
     '#6d28d9', '#ef4444', '#dc2626', '#b91c1c', '#f97316',
     '#eab308', '#84cc16', '#fbbf24', '#f472b6']
 PRECIP_LEVELS = [0, 0.01, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 7.5, 10.0, 15.0, 20.0, 25.0]
+
+# --- CITY COORDINATES (lon, lat) ---
+CITIES = {
+    'Philadelphia': (-75.165, 39.953),
+    'Pittsburgh':   (-79.996, 40.441),
+    'Buffalo':      (-78.878, 42.886),
+    'NYC':          (-74.006, 40.713),
+    'Lancaster':    (-76.306, 40.038),
+    'Harrisburg':   (-76.887, 40.273),
+    'Allentown':    (-75.471, 40.602),
+    'Scranton':     (-75.662, 41.409),
+    'Erie':         (-80.085, 42.129),
+    'Baltimore':    (-76.612, 39.290),
+}
 
 # --- HELPERS ---
 
@@ -89,6 +107,24 @@ def draw_labels(ax, ds, data_var, fmt="{:.0f}", check_val=None):
             ax.text(lon, lat, fmt.format(val), transform=ccrs.PlateCarree(),
                     ha='center', va='center', fontsize=6, fontweight='800', color='black', zorder=10)
     except: pass
+
+def draw_city_labels(ax, data_array=None, fmt="{:.0f}", suffix=""):
+    """Plot city name markers; optionally annotate with the nearest-grid-point value."""
+    for city, (lon, lat) in CITIES.items():
+        if lon < EXTENTS[0] or lon > EXTENTS[1] or lat < EXTENTS[2] or lat > EXTENTS[3]:
+            continue
+        ax.plot(lon, lat, 'o', markersize=3.5, color='#0f172a', markeredgewidth=0.5,
+                transform=ccrs.PlateCarree(), zorder=12)
+        label = city
+        if data_array is not None:
+            try:
+                val = float(data_array.sel(latitude=lat, longitude=lon, method='nearest').values)
+                label = f"{city}\n{fmt.format(val)}{suffix}"
+            except:
+                pass
+        ax.text(lon + 0.13, lat + 0.1, label, transform=ccrs.PlateCarree(),
+                ha='left', va='bottom', fontsize=6.5, fontweight='bold', color='#0f172a', zorder=13,
+                bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.72, edgecolor='none'))
 
 def setup_plot(H, fxx, datatype):
     fig = plt.figure(figsize=(12, 11), facecolor='white')
@@ -138,6 +174,7 @@ for fxx in range(1, 19):
                                cmap=ListedColormap(TEMP_COLORS), norm=BoundaryNorm(TEMP_LEVELS, len(TEMP_COLORS)))
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
             draw_labels(ax, ds_t, xr.DataArray(data, coords=ds_t.coords))
+            draw_city_labels(ax, xr.DataArray(data, coords=ds_t.coords), fmt="{:.0f}", suffix="°")
             plt.savefig(f"frames_temp/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 2. WIND CHILL (Calculated Fallback)
@@ -166,6 +203,7 @@ for fxx in range(1, 19):
                 im = ax.pcolormesh(ds.longitude, ds.latitude, data, transform=ccrs.PlateCarree(), cmap=ListedColormap(WIND_COLORS), norm=BoundaryNorm(WIND_LEVELS, 14))
                 plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
                 draw_labels(ax, ds, xr.DataArray(data, coords=ds.coords), check_val=15)
+                draw_city_labels(ax, xr.DataArray(data, coords=ds.coords), fmt="{:.0f}", suffix=" mph")
                 plt.savefig(f"{folder}/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 4. TOTAL PRECIP
@@ -177,6 +215,7 @@ for fxx in range(1, 19):
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(PRECIP_COLORS), norm=BoundaryNorm(PRECIP_LEVELS, len(PRECIP_COLORS)))
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
             draw_labels(ax, ds_tp, xr.DataArray(data, coords=ds_tp.coords), fmt="{:.2f}", check_val=0.1)
+            draw_city_labels(ax, xr.DataArray(data, coords=ds_tp.coords), fmt="{:.2f}", suffix='"')
             plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 5. PRECIP TYPE (Intensity Based)
@@ -188,10 +227,22 @@ for fxx in range(1, 19):
             for i, vname in enumerate(['crain', 'cfrzr', 'icep', 'csnow'], 0):
                 if vname in ds_pt: final_map = np.where(ds_pt[vname] == 1, (i*3)+1 + intensity, final_map)
             fig, ax = setup_plot(H, fxx, "Precip Type & Intensity")
-            im = ax.pcolormesh(ds_pt.longitude, ds_pt.latitude, np.ma.masked_where(final_map==0, final_map),
-                               transform=ccrs.PlateCarree(), cmap=ListedColormap(PTYPE_COLORS), norm=BoundaryNorm(PTYPE_LEVELS, 14))
-            cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8, ticks=[2, 5, 8, 11])
-            cbar.ax.set_xticklabels(['Rain', 'Mix', 'Ice', 'Snow'], color='#334155', fontweight='bold')
+            ax.pcolormesh(ds_pt.longitude, ds_pt.latitude, np.ma.masked_where(final_map==0, final_map),
+                          transform=ccrs.PlateCarree(), cmap=ListedColormap(PTYPE_COLORS), norm=BoundaryNorm(PTYPE_LEVELS, 14))
+            # Custom legend: 4 rows (type) × 3 columns (intensity)
+            _types      = [('Rain', 1), ('Mix/Sleet', 4), ('Ice', 7), ('Snow', 10)]
+            _intensities = ['Light', 'Moderate', 'Heavy']
+            legend_handles = [
+                mpatches.Patch(facecolor=PTYPE_COLORS[base + k], edgecolor='#64748b',
+                               linewidth=0.5, label=f'{tname} ({iname})')
+                for tname, base in _types
+                for k, iname in enumerate(_intensities)
+            ]
+            ax.legend(handles=legend_handles, ncol=3, loc='lower center',
+                      bbox_to_anchor=(0.5, -0.17), fontsize=8.5, frameon=True,
+                      framealpha=0.95, edgecolor='#334155', facecolor='white',
+                      columnspacing=1.2, handlelength=1.6, handletextpad=0.5)
+            draw_city_labels(ax)
             plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 6. SNOWFALL
@@ -203,6 +254,7 @@ for fxx in range(1, 19):
                                transform=ccrs.PlateCarree(), cmap=ListedColormap(SNOW_COLORS), norm=BoundaryNorm(SNOW_LEVELS, 13))
             plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, aspect=50, shrink=0.8).ax.tick_params(colors='#334155')
             draw_labels(ax, ds_s, xr.DataArray(data, coords=ds_s.coords), fmt="{:.1f}", check_val=0.1)
+            draw_city_labels(ax, xr.DataArray(data, coords=ds_s.coords), fmt="{:.1f}", suffix='"')
             plt.savefig(f"frames_snow/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         print(f"Finished Frame f{fxx}")
