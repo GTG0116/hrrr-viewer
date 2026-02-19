@@ -55,13 +55,13 @@ WIND_COLORS = [
 WIND_LEVELS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100]
 
 PTYPE_COLORS = [
-    '#ffffff00',                        # 0: transparent (no precipitation)
-    '#4ade80', '#eab308', '#b91c1c',    # 1-3:  Rain  (light green → yellow → dark red)
-    '#f9a8d4', '#e11d48', '#881337',    # 4-6:  Mix   (light pink → rose → dark crimson)
-    '#c4b5fd', '#7c3aed', '#3b0764',    # 7-9:  Ice   (light violet → purple → deep purple)
-    '#bae6fd', '#0ea5e9', '#0c4a6e',    # 10-12: Snow  (light sky → blue → deep navy)
+    '#ffffff00',                                        # 0:    transparent (no precipitation)
+    '#86efac', '#22c55e', '#eab308', '#f97316', '#dc2626',      # 1-5:   Rain  (lt green → green → yellow → orange → red)
+    '#fda4af', '#fb923c', '#ef4444', '#991b1b', '#4c0519',      # 6-10:  Frzg Rain (lt pink → salmon → red → dark red → maroon)
+    '#e9d5ff', '#c084fc', '#9333ea', '#6b21a8', '#3b0764',      # 11-15: Ice   (lt lavender → lavender → purple → dk purple → deepest)
+    '#bae6fd', '#38bdf8', '#0d9488', '#9333ea', '#f9a8d4',      # 16-20: Snow  (lt sky → med blue → teal → purple → pink)
 ]
-PTYPE_LEVELS = np.arange(0, 14)
+PTYPE_LEVELS = np.arange(0, 22)
 
 PRECIP_COLORS = [
     '#ffffff00', '#e0f2fe', '#7dd3fc', '#38bdf8', '#0ea5e9',
@@ -130,6 +130,8 @@ def setup_plot(H, fxx, datatype):
     fig = plt.figure(figsize=(12, 11), facecolor='white')
     ax = plt.axes(projection=MAP_CRS)
     ax.set_extent(EXTENTS, crs=ccrs.PlateCarree())
+    ax.add_feature(cfeature.NaturalEarthFeature('cultural', 'admin_2_counties_lakes', '10m',
+                   facecolor='none', edgecolor='#94a3b8', linewidth=0.3), zorder=2)
     ax.add_feature(cfeature.STATES.with_scale('10m'), edgecolor='#334155', linewidth=1.5, zorder=3)
 
     init_dt = H.date.replace(tzinfo=pytz.UTC)
@@ -218,31 +220,33 @@ for fxx in range(1, 19):
             draw_city_labels(ax, xr.DataArray(data, coords=ds_tp.coords), fmt="{:.2f}", suffix='"')
             plt.savefig(f"frames_total_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
-        # 5. PRECIP TYPE (Intensity Based)
+        # 5. PRECIP TYPE (Intensity Based — 5 levels per type)
         ds_pt = robust_get_data(H, [":(REFC|CRAIN|CSNOW|CFRZR|CICEP):"])
         if ds_pt:
             refc = gaussian_filter(ds_pt.refc.values, sigma=SMOOTH_SIGMA)
-            intensity = np.clip((refc / 15).astype(int), 0, 2)
+            # 5 intensity bins: 0-10, 10-20, 20-30, 30-40, 40+ dBZ → indices 0-4
+            intensity = np.clip((refc / 10).astype(int), 0, 4)
             final_map = np.zeros_like(refc)
             for i, vname in enumerate(['crain', 'cfrzr', 'icep', 'csnow'], 0):
-                if vname in ds_pt: final_map = np.where(ds_pt[vname] == 1, (i*3)+1 + intensity, final_map)
+                if vname in ds_pt: final_map = np.where(ds_pt[vname] == 1, (i*5)+1 + intensity, final_map)
             fig, ax = setup_plot(H, fxx, "Precip Type & Intensity")
             ax.pcolormesh(ds_pt.longitude, ds_pt.latitude, np.ma.masked_where(final_map==0, final_map),
-                          transform=ccrs.PlateCarree(), cmap=ListedColormap(PTYPE_COLORS), norm=BoundaryNorm(PTYPE_LEVELS, 14))
-            # Custom legend: 4 rows (type) × 3 columns (intensity)
-            _types      = [('Rain', 1), ('Mix/Sleet', 4), ('Ice', 7), ('Snow', 10)]
-            _intensities = ['Light', 'Moderate', 'Heavy']
+                          transform=ccrs.PlateCarree(), cmap=ListedColormap(PTYPE_COLORS), norm=BoundaryNorm(PTYPE_LEVELS, 21))
+            # Custom legend: 4 rows (type) × 5 columns (intensity)
+            _types       = [('Rain', 1), ('Frzg Rain', 6), ('Ice Pellets', 11), ('Snow', 16)]
+            _intensities = ['V.Light', 'Light', 'Moderate', 'Heavy', 'Intense']
             legend_handles = [
                 mpatches.Patch(facecolor=PTYPE_COLORS[base + k], edgecolor='#64748b',
                                linewidth=0.5, label=f'{tname} ({iname})')
                 for tname, base in _types
                 for k, iname in enumerate(_intensities)
             ]
-            ax.legend(handles=legend_handles, ncol=3, loc='lower center',
-                      bbox_to_anchor=(0.5, -0.17), fontsize=8.5, frameon=True,
+            ax.legend(handles=legend_handles, ncol=5, loc='lower center',
+                      bbox_to_anchor=(0.5, -0.17), fontsize=8, frameon=True,
                       framealpha=0.95, edgecolor='#334155', facecolor='white',
-                      columnspacing=1.2, handlelength=1.6, handletextpad=0.5)
-            draw_city_labels(ax)
+                      columnspacing=0.9, handlelength=1.5, handletextpad=0.4)
+            refc_da = xr.DataArray(refc, coords={'latitude': ds_pt.latitude, 'longitude': ds_pt.longitude})
+            draw_city_labels(ax, refc_da, fmt="{:.0f}", suffix=" dBZ")
             plt.savefig(f"frames_precip/f{fxx:02d}.png", dpi=100, bbox_inches='tight', facecolor='white'); plt.close()
 
         # 6. SNOWFALL
